@@ -2,35 +2,6 @@ package crypto
 
 import "filippo.io/edwards25519"
 
-type ParticipantID int
-
-type PublicParams struct {
-	K int // soglia
-	N int // numero di partecipanti (utenti)
-	M Matrix
-}
-
-type DealerShares struct {
-	ServerShare       Scalar   // beta1
-	ParticipantShares []Scalar // gamma1,...,gamman
-}
-
-type SecretVector struct {
-	S  Scalar   // segreto
-	R2 Scalar   // coefficiente per p1
-	T  []Scalar // t1,...,t_{k-1}
-}
-
-type ReconstructionSet struct {
-	Indices []ParticipantID
-	Shares  []Scalar
-}
-
-type Protocol struct {
-	PP    PublicParams
-	Alpha Scalar
-}
-
 func NewProtocol(alpha *Scalar, k, n int) *Protocol {
 	return &Protocol{
 		PP: PublicParams{

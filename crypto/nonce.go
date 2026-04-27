@@ -10,13 +10,6 @@ import (
 	"filippo.io/edwards25519"
 )
 
-type NonceShare struct {
-	Index ParticipantID
-	ri    Scalar
-	Ri    []byte
-	ci    []byte
-}
-
 // commitNonce calcola H(sess.ID || sess.IndexHash || index || Ri).
 func commitNonce(sess *Session, index ParticipantID, Ri []byte) []byte {
 	h := sha256.New()

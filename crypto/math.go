@@ -4,12 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-
-	"filippo.io/edwards25519"
 )
-
-type Scalar = edwards25519.Scalar
-type Matrix [][]Scalar
 
 func scalarOne() Scalar {
 	var one Scalar
@@ -22,11 +17,6 @@ func scalarOne() Scalar {
 	}
 
 	return one
-}
-
-func scalarZero() Scalar {
-	var z Scalar
-	return z
 }
 
 func computePowers(alpha *Scalar, maxExp int) []Scalar {
