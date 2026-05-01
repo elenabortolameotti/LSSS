@@ -6,19 +6,6 @@ import (
 	"fmt"
 )
 
-func scalarOne() Scalar {
-	var one Scalar
-
-	b := make([]byte, 32)
-	b[0] = 1
-
-	if _, err := one.SetCanonicalBytes(b); err != nil {
-		panic(err)
-	}
-
-	return one
-}
-
 func computePowers(alpha *Scalar, maxExp int) []Scalar {
 	if maxExp < 0 {
 		panic("negative maxExp")
