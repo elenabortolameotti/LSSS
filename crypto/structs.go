@@ -307,6 +307,19 @@ func (p *Participant) VerifyConsistency(comm Commitment) (bool, error) {
 }
 
 func (p *Participant) SetLagrangeCoefficient(ids []ParticipantID) {
+	// if p.id is not in ids, then p.lagrangeCoefficient = 0
+	m := map[ParticipantID]bool{}
+	for _, id := range ids {
+		m[id] = true
+	}
+	// if p.id is not in ids, then p.lagrangeCoefficient = 0,
+	// because p does not participate in the reconstruction and therefore
+	// his share does not contribute to the reconstruction of the secret
+
+	if !m[p.id] {
+		p.lagrangeCoefficient = Scalar{}
+		return
+	}
 	var aus Scalar
 	p.lagrangeCoefficient.Set(&One)                              // coeff = one
 	aus.Set(&One)                                                // aus = one
