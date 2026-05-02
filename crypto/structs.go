@@ -217,9 +217,10 @@ func (d *Dealer) SetCommAndShares() error {
 
 // Participant (user)
 type Participant struct {
-	id    ParticipantID
-	name  string
-	share Scalar
+	id                  ParticipantID
+	name                string
+	share               Scalar
+	lagrangeCoefficient Scalar
 }
 
 func (p *Participant) SetID(id ParticipantID) error {
@@ -303,4 +304,64 @@ func (p *Participant) VerifyConsistency(comm Commitment) (bool, error) {
 			return false, nil
 		}
 	}
+}
+
+func (p *Participant) SetLagrangeCoefficient(ids []ParticipantID) {
+	var aus Scalar
+	p.lagrangeCoefficient.Set(&One)                              // coeff = one
+	aus.Set(&One)                                                // aus = one
+	aus.Subtract(&aus, &alpha)                                   // aus = 1-alpha
+	aus.Invert(&aus)                                             // aus = 1/(1-alpha)
+	p.lagrangeCoefficient.Multiply(&p.lagrangeCoefficient, &aus) // coeff = alpha / (1 - alpha)
+
+	var term Scalar
+	term.Set(&One) // term = one
+	for _, id := range ids {
+		if id == p.id {
+			continue
+		} else {
+			var aus2 Scalar
+			var aus3 Scalar
+			aus2.Set(&One)
+			ScalarPow(&alpha, uint8(id-1), &aus2)
+			aus3.Set(&One)
+			ScalarPow(&alpha, uint8(p.id-1), &aus3)
+			aus3.Subtract(&aus3, &aus2) // aus3 = alpha^{id-1} - alpha^{p.id-1}
+			aus3.Invert(&aus3)          // aus3 = 1/(alpha^{id-1} - alpha^{p.id-1})
+			aus2.Multiply(&aus2, &aus3) // aus2 = alpha^{id-1} / (alpha^{id-1} - alpha^{p.id-1})
+			term.Multiply(&term, &aus2)
+		}
+	}
+	p.lagrangeCoefficient.Multiply(&p.lagrangeCoefficient, &term) // coeff = alpha / (1 - alpha) * product_{j!=i} (alpha^{id-1} / (alpha^{id-1} - alpha^{p.id-1}))
+}
+
+func (p *Participant) GetLagrangeCoefficient() Scalar {
+	return p.lagrangeCoefficient
+}
+
+// Server
+type Server struct {
+	share               Scalar
+	lagrangeCoefficient Scalar
+}
+
+func (s *Server) SetShare(share Scalar) {
+	s.share = share
+}
+
+func (s *Server) GetShare() Scalar {
+	return s.share
+}
+
+func (s *Server) SetLagrangeCoefficient([]ParticipantID) {
+	var aus Scalar
+	s.lagrangeCoefficient.Set(&alpha)                            // coeff = alpha
+	aus.Set(&alpha)                                              // aus = alpha
+	aus.Subtract(&aus, &One)                                     // aus = alpha - 1
+	aus.Invert(&aus)                                             // aus = 1/(alpha - 1)
+	s.lagrangeCoefficient.Multiply(&s.lagrangeCoefficient, &aus) // coeff = alpha / (alpha - 1)
+}
+
+func (s *Server) GetLagrangeCoefficient() Scalar {
+	return s.lagrangeCoefficient
 }
