@@ -334,3 +334,22 @@ func (s *Server) SetLagrangeCoefficient([]ParticipantID) {
 func (s *Server) GetLagrangeCoefficient() Scalar {
 	return s.lagrangeCoefficient
 }
+
+func (s *Server) VerifyConsistency(comm Commitment) (bool, error) {
+	if s.share.Equal(&Scalar{}) == 1 {
+		return false, errors.New("s.VerifyConsistency failed: server share is not set")
+	}
+
+	if comm == nil {
+		return false, errors.New("s.VerifyConsistency failed: invalid commitment")
+	}
+	lhs := comm[1]
+	lhs.Add(&lhs, &comm[0]) // lhs = comm[1] + comm[0]
+	rhs := edwards25519.NewIdentityPoint()
+	rhs.ScalarBaseMult(&s.share)
+	if lhs.Equal(rhs) == 1 {
+		return true, nil
+	} else {
+		return false, nil
+	}
+}
