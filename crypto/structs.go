@@ -10,51 +10,7 @@ import (
 // Types & variables
 type Point = edwards25519.Point
 type Scalar = edwards25519.Scalar
-type Matrix [][]Scalar
 type ParticipantID int
-
-// Signature scheme
-type PartialSignature struct {
-	Index ParticipantID
-	Z     Scalar
-}
-
-type Signature struct {
-	R Point
-	Z Scalar
-}
-
-type WirePartialSignature struct {
-	Index []byte
-	Z     []byte
-}
-
-type WireSignature struct {
-	R []byte
-	Z []byte
-}
-
-// Other structs
-
-type ReconstructionSet struct {
-	Indices []ParticipantID
-	Shares  []Scalar
-}
-
-// Nonce
-type NonceShare struct {
-	Index ParticipantID
-	ri    Scalar
-	Ri    []byte
-	ci    []byte
-}
-
-// Session
-type Session struct {
-	ID        []byte
-	Indices   []ParticipantID
-	IndexHash []byte
-}
 
 ///////////////////////////////////////////////////////////////
 
@@ -103,7 +59,7 @@ type Shares struct {
 type Dealer struct {
 	parameters ThresholdParams
 	secret     Scalar
-	Commitment Commitment
+	commitment Commitment
 	shares     Shares
 	friends    []string
 }
@@ -166,16 +122,16 @@ func (d *Dealer) SetCommAndShares() error {
 	}
 
 	// Building of Commitment
-	err = d.Commitment.SetNumPoints(d.parameters.K)
+	err = d.commitment.SetNumPoints(d.parameters.K)
 	if err != nil {
 		return fmt.Errorf("d.SetCommAndShares failed: %w", err)
 	}
 
-	d.Commitment[0].ScalarBaseMult(&secVec.s)
-	d.Commitment[1].ScalarBaseMult(&secVec.r2)
+	d.commitment[0].ScalarBaseMult(&secVec.s)
+	d.commitment[1].ScalarBaseMult(&secVec.r2)
 
 	for i := 0; i < d.parameters.K-1; i++ {
-		d.Commitment[i+2].ScalarBaseMult(&secVec.t[i])
+		d.commitment[i+2].ScalarBaseMult(&secVec.t[i])
 	}
 
 	// Building of shares

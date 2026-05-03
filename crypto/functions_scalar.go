@@ -2,11 +2,26 @@ package crypto
 
 import (
 	"crypto/rand"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
 	"filippo.io/edwards25519"
 )
+
+func IntToBytes(i int) []byte {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint64(buf, uint64(i))
+	return buf
+}
+
+func BytesToParticipantID(b []byte) (ParticipantID, error) {
+	if len(b) != 4 {
+		return 0, errors.New("invalid participant id length")
+	}
+	return ParticipantID(binary.BigEndian.Uint32(b)), nil
+}
 
 func scalarOne() Scalar {
 	var one Scalar
@@ -95,14 +110,3 @@ func generateRandomScalars(scalars []Scalar) error {
 
 var One = scalarOne()
 var alpha = SetAlpha()
-
-func NewProtocol(alpha *Scalar, k, n int) *Protocol {
-	return &Protocol{
-		PP: PublicParams{
-			K: k,
-			N: n,
-			M: BuildM(alpha, k, n),
-		},
-		Alpha: *alpha,
-	}
-}
