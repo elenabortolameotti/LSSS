@@ -31,8 +31,8 @@ func NewSession(indices []ParticipantID, k, n int) (*Session, error) {
 	}
 
 	return &Session{
-		ID:        sid,
-		Indices:   cp,
-		IndexHash: h.Sum(nil),
+		id:        sid,
+		indices:   cp,
+		indexHash: h.Sum(nil),
 	}, nil
 }

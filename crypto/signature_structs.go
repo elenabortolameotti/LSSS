@@ -1,6 +1,8 @@
 package crypto
 
-import "errors"
+import (
+	"errors"
+)
 
 type PartialSignature struct {
 	Index ParticipantID
@@ -29,10 +31,34 @@ type ReconstructionSet struct {
 
 // Nonce
 type NonceShare struct {
-	Index ParticipantID
+	index ParticipantID
 	ri    Scalar
 	Ri    []byte
 	ci    []byte
+}
+
+func (n *NonceShare) SetIndex(index ParticipantID) error {
+	if index < 0 {
+		return errors.New("n.SetIndex failed: index must be non-negative")
+	}
+	n.index = index
+	return nil
+}
+
+func (n *NonceShare) GetIndex() ParticipantID {
+	return n.index
+}
+
+func (n *NonceShare) Setri() error {
+	err := generateRandomScalar(&n.ri)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *NonceShare) Getri() (Scalar, error) {
+	return n.ri, nil
 }
 
 func (n *NonceShare) SetRi() error {
@@ -56,19 +82,69 @@ func (n *NonceShare) GetRi() ([]byte, error) {
 	return out, nil
 }
 
-func (n *NonceShare) SetCommit	(sess *Session) error {
+func (n *NonceShare) SetCommit(sess *Session) {
+	n.ci = commitNonce(sess, n.index, n.Ri)
+}
 
-func (n *NonceShare) GetCommit() []byte {
+func (n *NonceShare) GetCommit() ([]byte, error) {
+	if n.ci == nil {
+		return nil, errors.New("n.GetCommit failed: ci is not set")
+	}
 	out := make([]byte, len(n.ci))
 	copy(out, n.ci)
-	return out
+	return out, nil
+}
+
+func (n *NonceShare) VerifyNonce(sess *Session) bool {
+	return VerifyNonceAux(sess, n.index, n.ci, n.Ri)
 }
 
 // Session
 type Session struct {
-	ID        []byte
-	Indices   []ParticipantID
-	IndexHash []byte
+	id        []byte
+	indices   []ParticipantID
+	indexHash []byte
+}
+
+func (s *Session) HasParticipant(id ParticipantID) bool {
+	for _, x := range s.indices {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Session) GetID() []byte {
+	return s.id
+}
+
+func (s *Session) SetID(id []byte) {
+	s.id = id
+}
+
+func (s *Session) GetIndices() []ParticipantID {
+	out := make([]ParticipantID, len(s.indices))
+	copy(out, s.indices)
+	return out
+}
+
+func (s *Session) SetIndices(indices []ParticipantID) {
+	s.indices = indices
+}
+
+func (s *Session) GetIndexHash() []byte {
+	out := make([]byte, len(s.indexHash))
+	copy(out, s.indexHash)
+	return out
+}
+
+func (s *Session) SetIndexHash(indexHash []byte) {
+	s.indexHash = indexHash
+}
+
+func (s *Session) GetNumParticipants() int {
+	return len(s.indices)
 }
 
 // Participant
@@ -147,7 +223,7 @@ func (ss *ServerSigner) SetP(P Point) {
 	ss.P = P
 }
 
-func (ps *ParticipantSigner) SetR(r [][]byte) error {
+func (ss *ServerSigner) SetR(r [][]byte) error {
 	var R Point
 	for _, rBytes := range r {
 		var Ri *Point
@@ -157,18 +233,18 @@ func (ps *ParticipantSigner) SetR(r [][]byte) error {
 		}
 		R.Add(&R, Ri)
 	}
-	ps.R = R
+	ss.R = R
 	return nil
 }
 
-func (ps *ParticipantSigner) GetR() Point {
-	return ps.R
+func (ss *ServerSigner) GetR() Point {
+	return ss.R
 }
 
-func (ps *ParticipantSigner) SetN(n NonceShare) {
-	ps.n = n
+func (ss *ServerSigner) SetN(n NonceShare) {
+	ss.n = n
 }
 
-func (ps *ParticipantSigner) GetN() NonceShare {
-	return ps.n
+func (ss *ServerSigner) GetN() NonceShare {
+	return ss.n
 }

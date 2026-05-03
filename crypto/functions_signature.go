@@ -32,31 +32,11 @@ func NormalizeParticipantIDs(indices []ParticipantID, n int) ([]ParticipantID, e
 	return cp, nil
 }
 
-func CombineR(reveals map[ParticipantID]Point, signers []ParticipantID) (Point, error) {
-	ids, err := NormalizeParticipantIDs(signers, len(reveals))
-	if err != nil {
-		return Point{}, err
-	}
-
-	R := edwards25519.NewIdentityPoint()
-
-	for _, id := range ids {
-		Ri, ok := reveals[id]
-		if !ok {
-			return Point{}, errors.New("missing reveal")
-		}
-
-		R.Add(R, &Ri)
-	}
-
-	return *R, nil
-}
-
 func Challenge(sess *Session, R Point, P Point, msg []byte) (Scalar, error) {
 	if sess == nil {
 		return Scalar{}, errors.New("nil session")
 	}
-	if len(sess.ID) == 0 || len(sess.IndexHash) == 0 {
+	if len(sess.id) == 0 || len(sess.indexHash) == 0 {
 		return Scalar{}, errors.New("invalid session")
 	}
 	if len(msg) == 0 {
@@ -76,8 +56,8 @@ func Challenge(sess *Session, R Point, P Point, msg []byte) (Scalar, error) {
 	h.Write(R.Bytes())
 	h.Write(P.Bytes())
 	h.Write(msg)
-	h.Write(sess.ID)
-	h.Write(sess.IndexHash)
+	h.Write(sess.id)
+	h.Write(sess.indexHash)
 
 	sum := h.Sum(nil)
 
@@ -136,7 +116,7 @@ func PartialSign(
 	// -------------------------
 
 	return WirePartialSignature{
-		Index: IntToBytes(int(nonce.Index)),
+		Index: IntToBytes(int(nonce.index)),
 		Z:     zi.Bytes(),
 	}, nil
 }
@@ -218,7 +198,7 @@ func CombineSignature(
 func VerifySignature(P []byte, msg []byte, sig WireSignature, sess Session) bool {
 
 	// 1. controllo base input
-	if len(sess.ID) == 0 || len(sess.IndexHash) == 0 {
+	if len(sess.id) == 0 || len(sess.indexHash) == 0 {
 		return false
 	}
 
