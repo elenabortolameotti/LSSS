@@ -4,16 +4,6 @@ import (
 	"errors"
 )
 
-type PartialSignature struct {
-	Index ParticipantID
-	Z     Scalar
-}
-
-type Signature struct {
-	R Point
-	Z Scalar
-}
-
 type WirePartialSignature struct {
 	Index []byte
 	Z     []byte
@@ -149,11 +139,13 @@ func (s *Session) GetNumParticipants() int {
 
 // Participant
 type ParticipantSigner struct {
-	p Participant
-	P Point
-	R Point
-	z Scalar
-	n NonceShare
+	p          Participant
+	P          Point
+	R          Point
+	n          NonceShare
+	sess       Session
+	partialSig WirePartialSignature
+	finalSig   WireSignature
 }
 
 func (ps *ParticipantSigner) SetParticipant(p Participant) {
@@ -200,11 +192,13 @@ func (ps *ParticipantSigner) GetN() NonceShare {
 
 // Server
 type ServerSigner struct {
-	s Server
-	P Point
-	R Point
-	z Scalar
-	n NonceShare
+	s          Server
+	P          Point
+	R          Point
+	n          NonceShare
+	sess       Session
+	partialSig WirePartialSignature
+	finalSig   WireSignature
 }
 
 func (ss *ServerSigner) SetParticipant(s Server) {
@@ -247,4 +241,20 @@ func (ss *ServerSigner) SetN(n NonceShare) {
 
 func (ss *ServerSigner) GetN() NonceShare {
 	return ss.n
+}
+
+func (ps *ParticipantSigner) GetPartialSignature() WirePartialSignature {
+	return ps.partialSig
+}
+
+func (ps *ParticipantSigner) SetPartialSignature(sig WirePartialSignature) {
+	ps.partialSig = sig
+}
+
+func (ss *ServerSigner) GetPartialSignature() WirePartialSignature {
+	return ss.partialSig
+}
+
+func (ss *ServerSigner) SetPartialSignature(sig WirePartialSignature) {
+	ss.partialSig = sig
 }

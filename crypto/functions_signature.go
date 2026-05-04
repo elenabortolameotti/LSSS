@@ -62,7 +62,9 @@ func Challenge(sess *Session, R Point, P Point, msg []byte) (Scalar, error) {
 	sum := h.Sum(nil)
 
 	var e Scalar
-	e.SetUniformBytes(sum)
+	if _, err := e.SetUniformBytes(sum); err != nil {
+		return Scalar{}, err
+	}
 
 	// hardening opzionale: evita e = 0
 	var zero Scalar
@@ -73,131 +75,242 @@ func Challenge(sess *Session, R Point, P Point, msg []byte) (Scalar, error) {
 	return e, nil
 }
 
-func PartialSign(
-	share Scalar, // s_i (LSSS share)
-	nonce NonceShare, // r_i
-	lambda Scalar, // coeff LSSS
-	e Scalar, // challenge Schnorr
-) (WirePartialSignature, error) {
+func (ps *ParticipantSigner) PartialSign(msg []byte) error {
 
-	// -------------------------
-	// VALIDATION
-	// -------------------------
 	var zero Scalar
-	if nonce.ri.Equal(&zero) == 1 {
-		return WirePartialSignature{}, errors.New("zero nonce not allowed")
+
+	share := ps.p.GetShare()
+	lambda := ps.p.GetLagrangeCoefficient()
+
+	ri, err := ps.n.Getri()
+	if err != nil {
+		return err
+	}
+
+	if share.Equal(&zero) == 1 {
+		return errors.New("missing share")
 	}
 
 	if lambda.Equal(&zero) == 1 {
-		return WirePartialSignature{}, errors.New("zero lambda not allowed")
+		return errors.New("missing lambda")
 	}
 
-	// -------------------------
-	// COMPUTE TERM: e * lambda * s_i
-	// -------------------------
+	if ri.Equal(&zero) == 1 {
+		return errors.New("missing ri")
+	}
 
+	// Compute the challenge
+	e, err := Challenge(&ps.sess, ps.R, ps.P, msg)
+	if err != nil {
+		return err
+	}
+
+	// compute term = e*lambda*share
 	var term Scalar
-
-	// term = lambda * s_i
 	term.Multiply(&lambda, &share)
-
-	// term = e * (lambda * s_i)
 	term.Multiply(&term, &e)
 
-	// -------------------------
-	// FINAL z_i = r_i + term
-	// -------------------------
+	// compute z = ri + term
+	var z Scalar
+	z.Add(&ri, &term)
 
-	var zi Scalar
-	zi.Add(&nonce.ri, &term)
+	ps.partialSig = WirePartialSignature{
+		Index: IntToBytes(int(ps.p.GetID())),
+		Z:     z.Bytes(),
+	}
 
-	// -------------------------
-	// OUTPUT
-	// -------------------------
-
-	return WirePartialSignature{
-		Index: IntToBytes(int(nonce.index)),
-		Z:     zi.Bytes(),
-	}, nil
+	return nil
 }
 
-func CombineSignature(
-	R []byte,
+func (ss *ServerSigner) PartialSign(msg []byte) error {
+
+	var zero Scalar
+
+	share := ss.s.GetShare()
+	lambda := ss.s.GetLagrangeCoefficient()
+
+	ri, err := ss.n.Getri()
+	if err != nil {
+		return err
+	}
+
+	if share.Equal(&zero) == 1 {
+		return errors.New("missing share")
+	}
+
+	if lambda.Equal(&zero) == 1 {
+		return errors.New("missing lambda")
+	}
+
+	if ri.Equal(&zero) == 1 {
+		return errors.New("missing ri")
+	}
+
+	// Compute the challenge
+	e, err := Challenge(&ss.sess, ss.R, ss.P, msg)
+	if err != nil {
+		return err
+	}
+
+	// compute term = e*lambda*share
+	var term Scalar
+	term.Multiply(&lambda, &share)
+	term.Multiply(&term, &e)
+
+	// compute z = ri + term
+	var z Scalar
+	z.Add(&ri, &term)
+
+	ss.partialSig = WirePartialSignature{
+		Index: IntToBytes(int(ServerID)),
+		Z:     z.Bytes(),
+	}
+
+	return nil
+}
+
+func (ps *ParticipantSigner) CombineSignature(
 	partials map[ParticipantID]WirePartialSignature,
 	signers []ParticipantID,
-) (WireSignature, error) {
+) error {
 
-	ids, err := NormalizeParticipantIDs(signers, len(partials))
-	if err != nil {
-		return WireSignature{}, err
+	// da togliere?
+	if len(signers) != len(partials) {
+		return errors.New("incomplete signer set")
 	}
 
-	// Decode R
-	var Rpoint Point
-	if _, err := Rpoint.SetBytes(R); err != nil {
-		return WireSignature{}, errors.New("invalid R encoding")
-	}
+	Rpoint := ps.GetR()
 
+	// Reject identity point
 	if Rpoint.Equal(edwards25519.NewIdentityPoint()) == 1 {
-		return WireSignature{}, errors.New("invalid R (identity point)")
+		return errors.New("invalid R (identity point)")
 	}
 
-	// Aggregate z
+	// Aggregate all partial z values
 	var z Scalar
 
 	seen := make(map[ParticipantID]bool)
 
-	for _, id := range ids {
+	for _, id := range signers {
 
+		// Duplicate signer check
 		if seen[id] {
-			return WireSignature{}, errors.New("duplicate partial")
+			return errors.New("duplicate partial signature")
 		}
 		seen[id] = true
 
-		ps, ok := partials[id]
+		psig, ok := partials[id]
 		if !ok {
-			return WireSignature{}, errors.New("missing partial signature")
+			return errors.New("missing partial signature")
 		}
 
-		idx, err := BytesToParticipantID(ps.Index)
-
-		if idx < 1 || int(idx) > len(partials) {
-			return WireSignature{}, errors.New("invalid participant id")
-		}
+		idx, err := BytesToParticipantID(psig.Index)
 		if err != nil {
-			return WireSignature{}, err
+			return err
 		}
 
 		if idx != id {
-			return WireSignature{}, errors.New("partial signature index mismatch")
+			return errors.New("partial signature index mismatch")
 		}
 
-		// decode scalar
+		// Decode scalar z_i
 		var zi Scalar
-		if _, err := zi.SetCanonicalBytes(ps.Z); err != nil {
-			return WireSignature{}, errors.New("invalid partial scalar encoding")
+		if _, err := zi.SetCanonicalBytes(psig.Z); err != nil {
+			return errors.New("invalid partial scalar encoding")
 		}
 
+		// z = z + z_i
 		z.Add(&z, &zi)
 	}
 
-	// -------------------------
-	// Final checks
-	// -------------------------
 	var zero Scalar
 	if z.Equal(&zero) == 1 {
-		return WireSignature{}, errors.New("invalid signature scalar (z = 0)")
+		return errors.New("invalid signature scalar (z = 0)")
 	}
 
-	return WireSignature{
+	// Set the signature
+	ps.finalSig = WireSignature{
 		R: Rpoint.Bytes(),
 		Z: z.Bytes(),
-	}, nil
+	}
+
+	return nil
 }
 
+func (ss *ServerSigner) CombineSignature(
+	partials map[ParticipantID]WirePartialSignature,
+	signers []ParticipantID,
+) error {
+
+	// da togliere?
+	if len(signers) != len(partials) {
+		return errors.New("incomplete signer set")
+	}
+
+	Rpoint := ss.GetR()
+
+	// Reject identity point
+	if Rpoint.Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return errors.New("invalid R (identity point)")
+	}
+
+	// Aggregate all partial z values
+	var z Scalar
+
+	seen := make(map[ParticipantID]bool)
+
+	for _, id := range signers {
+
+		// Duplicate signer check
+		if seen[id] {
+			return errors.New("duplicate partial signature")
+		}
+		seen[id] = true
+
+		// Check partial exists
+		psig, ok := partials[id]
+		if !ok {
+			return errors.New("missing partial signature")
+		}
+
+		idx, err := BytesToParticipantID(psig.Index)
+		if err != nil {
+			return err
+		}
+
+		if idx != id {
+			return errors.New("partial signature index mismatch")
+		}
+
+		// Decode scalar z_i
+		var zi Scalar
+		if _, err := zi.SetCanonicalBytes(psig.Z); err != nil {
+			return errors.New("invalid partial scalar encoding")
+		}
+
+		// z = z + z_i
+		z.Add(&z, &zi)
+	}
+
+	// Reject zero final scalar
+	var zero Scalar
+	if z.Equal(&zero) == 1 {
+		return errors.New("invalid signature scalar (z = 0)")
+	}
+
+	// Set the signature
+	ss.finalSig = WireSignature{
+		R: Rpoint.Bytes(),
+		Z: z.Bytes(),
+	}
+
+	return nil
+}
+
+// se la vogliamo lasciare come funzione è ok
 func VerifySignature(P []byte, msg []byte, sig WireSignature, sess Session) bool {
 
-	// 1. controllo base input
+	// Basic input validation
 	if len(sess.id) == 0 || len(sess.indexHash) == 0 {
 		return false
 	}
@@ -215,7 +328,6 @@ func VerifySignature(P []byte, msg []byte, sig WireSignature, sess Session) bool
 		return false
 	}
 
-	// 3. evita public key invalida
 	var Ppoint Point
 	if _, err := Ppoint.SetBytes(P); err != nil {
 		return false
@@ -225,34 +337,88 @@ func VerifySignature(P []byte, msg []byte, sig WireSignature, sess Session) bool
 		return false
 	}
 
-	// 4. ricalcolo challenge e
+	// Recompute challenge
 	e, err := Challenge(&sess, Rpoint, Ppoint, msg)
 	if err != nil {
 		return false
 	}
 
-	// 5. LHS: z * G
+	// LHS: z * G
 	var z Scalar
 	var zero Scalar
 
-	if z.Equal(&zero) == 1 {
+	if _, err := z.SetCanonicalBytes(sig.Z); err != nil {
 		return false
 	}
 
-	if _, err := z.SetCanonicalBytes(sig.Z); err != nil {
+	if z.Equal(&zero) == 1 {
 		return false
 	}
 
 	var zG Point
 	zG.ScalarBaseMult(&z)
 
-	// 6. RHS: R + eP
+	// RHS: R + eP
 	var eP Point
 	eP.ScalarMult(&e, &Ppoint)
 
 	var rhs Point
 	rhs.Add(&Rpoint, &eP)
 
-	// 7. confronto finale
+	// Final check
 	return zG.Equal(&rhs) == 1
 }
+
+// se la vogliammo scrivere come metodo (per ora su ParticipantSigner)
+// nel caso: fare anche il setter se vogliamo aggiungere l'output alle struct
+/*
+func (ps *ParticipantSigner) VerifySignature(msg []byte) bool {
+	// 1. controlli base
+	if len(msg) == 0 {
+		return false
+	}
+
+	if ps.finalSig.R == nil || ps.finalSig.Z == nil {
+		return false
+	}
+
+	// 2. ricostruzione punti/scalari
+	var Rpoint Point
+	if _, err := Rpoint.SetBytes(ps.finalSig.R); err != nil {
+		return false
+	}
+
+	var z Scalar
+	if _, err := z.SetCanonicalBytes(ps.finalSig.Z); err != nil {
+		return false
+	}
+
+	// 3. recupero public key dalla session
+	Pbytes := ps.session.GetP()
+
+	var Ppoint Point
+	if _, err := Ppoint.SetBytes(Pbytes); err != nil {
+		return false
+	}
+
+	// 4. ricostruzione challenge
+	e, err := Challenge(ps.session, Rpoint, Ppoint, msg)
+	if err != nil {
+		return false
+	}
+
+	// 5. verifica equazione: zG ?= R + eP
+	var zG Point
+	zG.ScalarBaseMult(&z)
+
+	var eP Point
+	eP.ScalarMult(&e, &Ppoint)
+
+	var rhs Point
+	rhs.Add(&Rpoint, &eP)
+
+	// 6. confronto finale
+	return zG.Equal(&rhs) == 1
+}
+
+*/

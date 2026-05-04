@@ -12,6 +12,8 @@ type Point = edwards25519.Point
 type Scalar = edwards25519.Scalar
 type ParticipantID int
 
+const ServerID ParticipantID = 0
+
 ///////////////////////////////////////////////////////////////
 
 // useful structs
