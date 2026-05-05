@@ -1,6 +1,9 @@
 package crypto
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 )
 
@@ -109,8 +112,13 @@ func (s *Session) GetID() []byte {
 	return s.id
 }
 
-func (s *Session) SetID(id []byte) {
-	s.id = id
+func (s *Session) SetID(id []byte) error {
+	sid := make([]byte, 32)
+	if _, err := rand.Read(sid); err != nil {
+		return err
+	}
+	s.id = sid
+	return nil
 }
 
 func (s *Session) GetIndices() []ParticipantID {
@@ -129,8 +137,15 @@ func (s *Session) GetIndexHash() []byte {
 	return out
 }
 
-func (s *Session) SetIndexHash(indexHash []byte) {
-	s.indexHash = indexHash
+func (s *Session) SetIndexHash(ids []byte) {
+	h := sha256.New()
+	tmp := make([]byte, 4)
+
+	for _, id := range ids {
+		binary.BigEndian.PutUint32(tmp, uint32(id))
+		h.Write(tmp)
+	}
+	s.indexHash = h.Sum(nil)
 }
 
 func (s *Session) GetNumParticipants() int {
