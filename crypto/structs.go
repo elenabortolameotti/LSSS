@@ -44,11 +44,11 @@ type ThresholdParams struct {
 
 type Commitment []Point
 
-func (c Commitment) SetNumPoints(K int) error {
+func (c *Commitment) SetNumPoints(K int) error {
 	if K < 2 {
 		return errors.New("c.SetNumPoints failed: K must be at least 2")
 	}
-	c = make([]Point, K+1)
+	*c = make([]Point, K+1)
 	return nil
 }
 
@@ -95,8 +95,12 @@ func (d *Dealer) GetSecret() Scalar {
 	return d.secret
 }
 
-func (d *Dealer) SetFriends(friends []string) {
+func (d *Dealer) SetFriends(friends []string) error {
+	if len(friends) != d.parameters.N {
+		return errors.New("d.SetFriends failed: N is not equal to the number of friends")
+	}
 	d.friends = friends
+	return nil
 }
 
 func (d *Dealer) GetFriends() []string {
@@ -167,10 +171,16 @@ func (d *Dealer) SetCommAndShares() error {
 	// Zeroization
 	secVec.s = Scalar{}
 	secVec.r2 = Scalar{}
-	for i := range secVec.t {
-		secVec.t[i] = Scalar{}
-	}
+	clear(secVec.t)
 	return nil
+}
+
+func (d *Dealer) GetComm() *Commitment {
+	return &d.commitment
+}
+
+func (d *Dealer) GetShares(n int) Scalar {
+	return d.shares.ParticipantShares[n]
 }
 
 // Participant (user)
@@ -337,7 +347,7 @@ func (s *Server) GetLagrangeCoefficient() Scalar {
 	return s.lagrangeCoefficient
 }
 
-func (s *Server) VerifyConsistency(comm Commitment) (bool, error) {
+func (s *Server) VerifyConsistency(comm *Commitment) (bool, error) {
 	if s.share.Equal(&Scalar{}) == 1 {
 		return false, errors.New("s.VerifyConsistency failed: server share is not set")
 	}
@@ -345,8 +355,8 @@ func (s *Server) VerifyConsistency(comm Commitment) (bool, error) {
 	if comm == nil {
 		return false, errors.New("s.VerifyConsistency failed: invalid commitment")
 	}
-	lhs := comm[1]
-	lhs.Add(&lhs, &comm[0]) // lhs = comm[1] + comm[0]
+	lhs := (*comm)[1]
+	lhs.Add(&lhs, &(*comm)[0]) // lhs = comm[1] + comm[0]
 	rhs := edwards25519.NewIdentityPoint()
 	rhs.ScalarBaseMult(&s.share)
 	if lhs.Equal(rhs) == 1 {
