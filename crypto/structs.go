@@ -179,8 +179,12 @@ func (d *Dealer) GetComm() *Commitment {
 	return &d.commitment
 }
 
-func (d *Dealer) GetShares(n int) Scalar {
+func (d *Dealer) GetParticipantShares(n int) Scalar {
 	return d.shares.ParticipantShares[n]
+}
+
+func (d *Dealer) GetServerShare() Scalar {
+	return d.shares.ServerShare
 }
 
 // Participant (user)
@@ -256,16 +260,33 @@ func (p *Participant) VerifyConsistency(comm Commitment) (bool, error) {
 		lhs.Add(&lhs, &comm[0])      // lhs = comm[1]^alpha + comm[0]
 		var aus1 Scalar
 		var aus2 Point
-		ScalarPow(&alpha, uint8(p.id-1), &aus1)
-		aus2.ScalarMult(&aus1, &comm[2]) // aus2 = comm[2]^(alpha^{i-1})
-		lhs.Add(&lhs, &aus2)             // lhs = comm[0] + comm[1]^alpha + comm[2]^(alpha^{i-1})
+
+		// x = alpha^(p.id-1)
+		var x Scalar
+		ScalarPow(&alpha, uint8(p.id-1), &x)
+
+		// aus1 = x = alpha^(p.id-1)
+		aus1.Set(&x)
+
+		// primo termine: comm[2] * alpha^(p.id-1)
+		aus2.ScalarMult(&aus1, &comm[2])
+		lhs.Add(&lhs, &aus2)
+
 		for i := 3; i < len(comm); i++ {
-			aus1.Multiply(&alpha, &aus1)
-			aus2.ScalarMult(&aus1, &comm[i]) // aus2 = comm[i]^(alpha^{(i-1)*(j-1)})
-			lhs.Add(&lhs, &aus2)             // lhs += comm[i]^(alpha^{(i-1)*(j-1)})
+			// aus1 = aus1 * x
+			// quindi:
+			// comm[3] usa x^2 = alpha^(2(p.id-1))
+			// comm[4] usa x^3 = alpha^(3(p.id-1))
+			// ecc.
+			aus1.Multiply(&aus1, &x)
+
+			aus2.ScalarMult(&aus1, &comm[i])
+			lhs.Add(&lhs, &aus2)
 		}
+
 		rhs := edwards25519.NewIdentityPoint()
 		rhs.ScalarBaseMult(&p.share)
+
 		if lhs.Equal(rhs) == 1 {
 			return true, nil
 		} else {
