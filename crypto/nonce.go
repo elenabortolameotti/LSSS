@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/binary"
+	"errors"
 
 	"filippo.io/edwards25519"
 )
@@ -22,23 +23,24 @@ func commitNonce(sess *Session, index ParticipantID, Ri []byte) []byte {
 	return h.Sum(nil)
 }
 
-func VerifyNonceAux(sess *Session, index ParticipantID, commit, Ri []byte) bool {
-	if !sess.HasParticipant(index) {
-		return false
-	}
+func VerifyNonceAux(sess *Session, index ParticipantID, commit, Ri []byte) (bool, error) {
 	if sess == nil {
-		return false
+		return false, errors.New("VerifyNonceAux failed: sess is nil")
+	}
+
+	if !sess.HasParticipant(index) {
+		return false, errors.New("VerifyNonceAux failed: index is not a participant of the session")
 	}
 
 	if len(commit) != sha256.Size {
-		return false
+		return false, errors.New("VerifyNonceAux failed: commit has incorrect length")
 	}
 
 	var R edwards25519.Point
 	if _, err := R.SetBytes(Ri); err != nil {
-		return false
+		return false, errors.New("VerifyNonceAux failed: failed to set Ri")
 	}
 
 	sum := commitNonce(sess, index, Ri)
-	return subtle.ConstantTimeCompare(sum, commit) == 1
+	return subtle.ConstantTimeCompare(sum, commit) == 1, nil
 }

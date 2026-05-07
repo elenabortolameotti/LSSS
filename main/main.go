@@ -50,7 +50,11 @@ func main() {
 	}
 
 	// Se non panica, la verifica di consistenza è stata eseguita correttamente
-	fmt.Println(IsConsistent)
+	if IsConsistent {
+		fmt.Println("Gianni's share is consistent with the commitment.")
+	} else {
+		fmt.Println("Gianni's share is NOT consistent with the commitment.")
+	}
 
 	ids := []crypto.ParticipantID{1, 3, 4}
 
@@ -95,6 +99,15 @@ func main() {
 
 	server := new(crypto.Server)
 	server.SetShare(dealer.GetServerShare())
+	boolServerConsistent, err := server.VerifyConsistency(dealer.GetComm())
+	if err != nil {
+		panic(err)
+	}
+	if boolServerConsistent {
+		fmt.Println("Server's share is consistent with the commitment.")
+	} else {
+		fmt.Println("Server's share is NOT consistent with the commitment.")
+	}
 	server.SetLagrangeCoefficient(ids)
 
 	aus2 := server.GetLagrangeCoefficient()
