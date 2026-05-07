@@ -345,6 +345,15 @@ func (p *Participant) GetLagrangeCoefficient() Scalar {
 type Server struct {
 	share               Scalar
 	lagrangeCoefficient Scalar
+	params              ThresholdParams
+}
+
+func (s *Server) SetParams(par *ThresholdParams) {
+	s.params = *par
+}
+
+func (s *Server) GetParams() ThresholdParams {
+	return s.params
 }
 
 func (s *Server) SetShare(share Scalar) {

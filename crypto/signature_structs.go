@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
+	"filippo.io/edwards25519"
 )
 
 // Session
@@ -66,14 +68,34 @@ func (s *Session) GetNumParticipants() int {
 	return len(s.indices)
 }
 
-type WirePartialSignature struct {
-	Index []byte
-	Z     []byte
+type PartialSignature struct {
+	Index    ParticipantID
+	setIndex bool
+	Z        Scalar
+	setZ     bool
 }
 
-type WireSignature struct {
-	R []byte
-	Z []byte
+func (ps *PartialSignature) SetIndex(ind *ParticipantID) {
+	ps.Index = *ind
+	ps.setIndex = true
+}
+
+func (ps *PartialSignature) GetIndex() ParticipantID {
+	return ps.Index
+}
+
+func (ps *PartialSignature) SetZ(z *Scalar) {
+	ps.Z = *z
+	ps.setZ = true
+}
+
+func (ps *PartialSignature) GetZ() Scalar {
+	return ps.Z
+}
+
+type Signature struct {
+	R Point
+	Z Scalar
 }
 
 // Nonce
@@ -81,7 +103,8 @@ type NonceShare struct {
 	index  ParticipantID
 	ri     Scalar
 	set_ri bool
-	Ri     []byte
+	Ri     Point
+	setRi  bool
 	ci     []byte
 }
 
@@ -116,15 +139,16 @@ func (n *NonceShare) SetRi() error {
 	}
 	var Ri *Point
 	Ri = Ri.ScalarBaseMult(&n.ri)
-	n.Ri = Ri.Bytes()
+	n.Ri = *Ri
+	n.setRi = true
 	return nil
 }
 
-func (n *NonceShare) GetRi() ([]byte, error) {
-	if n.Ri == nil {
+func (n *NonceShare) GetRi() (*Point, error) {
+	if !n.setRi {
 		return nil, errors.New("n.GetRi failed: Ri is not set")
 	}
-	return n.Ri, nil
+	return &n.Ri, nil
 }
 
 func (n *NonceShare) SetCommit(sess *Session) {
@@ -164,16 +188,43 @@ func (m *MaterialToSend1) GetCommit() []byte {
 	return m.ci
 }
 
+type MaterialToSend2 struct {
+	Index    ParticipantID
+	setIndex bool
+	Ri       Point
+	setRi    bool
+}
+
+func (m *MaterialToSend2) SetIndex(index ParticipantID) {
+	m.Index = index
+	m.setIndex = true
+}
+
+func (m *MaterialToSend2) GetIndex() ParticipantID {
+	return m.Index
+}
+
+func (m *MaterialToSend2) SetRi(Ri Point) {
+	m.Ri = Ri
+	m.setRi = true
+}
+
+func (m *MaterialToSend2) GetRi() Point {
+	return m.Ri
+}
+
 // Participant
 type ParticipantSigner struct {
 	p               Participant
 	P               Point
+	indices         []ParticipantID
 	R               Point
 	n               NonceShare
 	sess            Session
-	partialSig      WirePartialSignature
-	finalSig        WireSignature
-	materialToSend1 MaterialToSend1 // material to send to others at first
+	materialToSend1 MaterialToSend1  // material to send to others at first
+	materialToSend2 MaterialToSend2  // material to send to others at second
+	partialSig      PartialSignature // material to send to others at third
+	finalSig        Signature
 }
 
 func (ps *ParticipantSigner) SetParticipant(p Participant) {
@@ -192,22 +243,12 @@ func (ps *ParticipantSigner) GetP() Point {
 	return ps.P
 }
 
-func (ps *ParticipantSigner) SetR(r [][]byte, ids []ParticipantID) error {
-	var R Point
-	for _, rBytes := range r {
-		var Ri *Point
-		Ri, err := Ri.SetBytes(rBytes)
-		if err != nil {
-			return err
-		}
-		R.Add(&R, Ri)
-	}
-	ps.R = R
-	return nil
+func (ps *ParticipantSigner) SetIndices(inds []ParticipantID) {
+	ps.indices = inds
 }
 
-func (ps *ParticipantSigner) GetR() Point {
-	return ps.R
+func (ps *ParticipantSigner) GetIndices() []ParticipantID {
+	return ps.indices
 }
 
 func (ps *ParticipantSigner) SetN(n NonceShare) {
@@ -226,6 +267,54 @@ func (ps *ParticipantSigner) GetMaterialToSend1() MaterialToSend1 {
 	return ps.materialToSend1
 }
 
+func (ps *ParticipantSigner) SetMaterialToSend2(m MaterialToSend2) {
+	ps.materialToSend2 = m
+}
+
+func (ps *ParticipantSigner) GetMaterialToSend2() MaterialToSend2 {
+	return ps.materialToSend2
+}
+
+func (ps *ParticipantSigner) VerifyNonce(mat1 *MaterialToSend1, mat2 *MaterialToSend2) (bool, error) { // Verify the material received from another participant
+	if !mat1.setIndex {
+		return false, errors.New("ps.VerifyNonce failed: material index is not set")
+	}
+	if !mat1.setci {
+		return false, errors.New("ps.VerifyNonce failed: material commit is not set")
+	}
+	if !mat2.setIndex {
+		return false, errors.New("ps.VerifyNonce failed: material index is not set")
+	}
+	if !mat2.setRi {
+		return false, errors.New("ps.VerifyNonce failed: material Ri is not set")
+	}
+	if mat1.GetIndex() != mat2.GetIndex() {
+		return false, errors.New("ps.VerifyNonce failed: material indices do not match")
+	}
+
+	boolean, err := VerifyNonceAux(&ps.sess, mat1.Index, mat1.ci, mat2.Ri)
+	if err != nil {
+		return false, fmt.Errorf("ps.VerifyNonce failed: %w", err)
+	}
+	return boolean, nil
+}
+
+func (ps *ParticipantSigner) SetR(mat2 []MaterialToSend2) error {
+	var R Point
+	for _, riBytes := range mat2 {
+		if !riBytes.setIndex || !riBytes.setRi {
+			return errors.New("ps.SetR failed: the material is incomplete")
+		}
+		R.Add(&R, &riBytes.Ri)
+	}
+	ps.R = R
+	return nil
+}
+
+func (ps *ParticipantSigner) GetR() Point {
+	return ps.R
+}
+
 func (ps *ParticipantSigner) SetPartialSignature(msg []byte) error {
 
 	var zero Scalar
@@ -236,19 +325,19 @@ func (ps *ParticipantSigner) SetPartialSignature(msg []byte) error {
 	ri := ps.n.Getri()
 
 	if share.Equal(&zero) == 1 {
-		return errors.New("missing share")
+		return errors.New("ps.SetPartialSignature failed: missing share")
 	}
 
 	if lambda.Equal(&zero) == 1 {
-		return errors.New("missing lambda")
+		return errors.New("ps.SetPartialSignature failed: missing lambda")
 	}
 
 	if ri.Equal(&zero) == 1 {
-		return errors.New("missing ri")
+		return errors.New("ps.SetPartialSignature failed: missing ri")
 	}
 
 	// Compute the challenge
-	e, err := Challenge(&ps.sess, ps.R, ps.P, msg)
+	e, err := Challenge(&ps.sess, &ps.R, &ps.P, msg)
 	if err != nil {
 		return err
 	}
@@ -262,24 +351,67 @@ func (ps *ParticipantSigner) SetPartialSignature(msg []byte) error {
 	var z Scalar
 	z.Add(&ri, &term)
 
-	ps.partialSig = WirePartialSignature{
-		Index: IntToBytes(int(ps.p.GetID())),
-		Z:     z.Bytes(),
+	ps.partialSig = PartialSignature{
+		Index: ps.p.GetID(),
+		Z:     z,
 	}
 
 	return nil
 }
 
-func (ps *ParticipantSigner) GetPartialSignature() WirePartialSignature {
+func (ps *ParticipantSigner) GetPartialSignature() PartialSignature {
 	return ps.partialSig
 }
 
-func (ps *ParticipantSigner) VerifyNonce(mat *MaterialToSend1, Ri []byte) (bool, error) { // Verify the material received from another participant
-	boolean, err := VerifyNonceAux(&ps.sess, mat.Index, mat.ci, Ri)
-	if err != nil {
-		return false, fmt.Errorf("VerifyNonceAux failed: %w", err)
+func (ps *ParticipantSigner) CombineSignature(parSig []PartialSignature) error {
+	if len(parSig) != len(ps.indices) {
+		return errors.New("ps.CombineSignature failed: invalid number of partial signatures")
 	}
-	return boolean, nil
+
+	// Reject identity point
+	if ps.R.Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return errors.New("ps.CombineSignature failed: invalid R (identity point)")
+	}
+
+	// Aggregate all partial z values
+	z := ps.partialSig.Z
+
+	for _, el := range parSig {
+
+		if !el.setIndex || !el.setZ {
+			return errors.New("ps.CombineSignature failed: input is not complete")
+		}
+
+		for _, pId := range ps.indices {
+			if pId == el.Index {
+				pId = 0
+			}
+		}
+		z.Add(&z, &el.Z)
+	}
+
+	for _, pId := range ps.indices {
+		if pId != 0 {
+			return errors.New("ps.CombineSignature failed: ID mismatch between ps.indeces and partial signatures received")
+		}
+	}
+
+	var zero Scalar
+	if z.Equal(&zero) == 1 {
+		return errors.New("ps.CombineSignature failed: invalid signature scalar (z = 0)")
+	}
+
+	// Set the signature
+	ps.finalSig = Signature{
+		R: ps.R,
+		Z: z,
+	}
+
+	return nil
+}
+
+func (ps *ParticipantSigner) GetSignature() Signature {
+	return ps.finalSig
 }
 
 // Server
@@ -288,10 +420,12 @@ type ServerSigner struct {
 	P               Point
 	R               Point
 	n               NonceShare
+	indices         []ParticipantID
 	sess            Session
-	partialSig      WirePartialSignature
-	finalSig        WireSignature
-	materialToSend1 MaterialToSend1 // material to send to others at first
+	materialToSend1 MaterialToSend1  // material to send to others at first
+	materialToSend2 MaterialToSend2  // material to send to others at second
+	partialSig      PartialSignature // material to send to others at third
+	finalSig        Signature
 }
 
 func (ss *ServerSigner) SetParticipant(s Server) {
@@ -306,26 +440,12 @@ func (ss *ServerSigner) SetP(P Point) {
 	ss.P = P
 }
 
-func (ss *ServerSigner) GetS() Point {
+func (ss *ServerSigner) GetP() Point {
 	return ss.P
 }
 
-func (ss *ServerSigner) SetR(r [][]byte) error {
-	var R Point
-	for _, rBytes := range r {
-		var Ri *Point
-		Ri, err := Ri.SetBytes(rBytes)
-		if err != nil {
-			return err
-		}
-		R.Add(&R, Ri)
-	}
-	ss.R = R
-	return nil
-}
-
-func (ss *ServerSigner) GetR() Point {
-	return ss.R
+func (ss *ServerSigner) GetS() Point {
+	return ss.P
 }
 
 func (ss *ServerSigner) SetN(n NonceShare) {
@@ -334,6 +454,54 @@ func (ss *ServerSigner) SetN(n NonceShare) {
 
 func (ss *ServerSigner) GetN() NonceShare {
 	return ss.n
+}
+
+func (ss *ServerSigner) SetInd(ind []ParticipantID) {
+	ss.indices = ind
+}
+
+func (ss *ServerSigner) GetInd() []ParticipantID {
+	return ss.indices
+}
+
+func (ss *ServerSigner) SetMaterialToSend1(m MaterialToSend1) {
+	ss.materialToSend1 = m
+}
+
+func (ss *ServerSigner) GetMaterialToSend1() MaterialToSend1 {
+	return ss.materialToSend1
+}
+
+func (ss *ServerSigner) SetMaterialToSend2(m MaterialToSend2) {
+	ss.materialToSend2 = m
+}
+
+func (ss *ServerSigner) GetMaterialToSend2() MaterialToSend2 {
+	return ss.materialToSend2
+}
+
+func (ss *ServerSigner) VerifyNonce(mat *MaterialToSend1, Ri Point) (bool, error) { // Verify the material received from another participant
+	boolean, err := VerifyNonceAux(&ss.sess, mat.Index, mat.ci, Ri)
+	if err != nil {
+		return false, fmt.Errorf("ss.VerifyNonce failed: %w", err)
+	}
+	return boolean, nil
+}
+
+func (ss *ServerSigner) SetR(mat2 []MaterialToSend2) error {
+	var R Point
+	for _, riBytes := range mat2 {
+		if !riBytes.setIndex || !riBytes.setRi {
+			return errors.New("ss.SetR failed: the material is incomplete")
+		}
+		R.Add(&R, &riBytes.Ri)
+	}
+	ss.R = R
+	return nil
+}
+
+func (ss *ServerSigner) GetR() Point {
+	return ss.R
 }
 
 func (ss *ServerSigner) SetPartialSignature(msg []byte) error {
@@ -346,19 +514,19 @@ func (ss *ServerSigner) SetPartialSignature(msg []byte) error {
 	ri := ss.n.Getri()
 
 	if share.Equal(&zero) == 1 {
-		return errors.New("missing share")
+		return errors.New("ss.SetPartialSignature failed: missing share")
 	}
 
 	if lambda.Equal(&zero) == 1 {
-		return errors.New("missing lambda")
+		return errors.New("ss.SetPartialSignature failed: missing lambda")
 	}
 
 	if ri.Equal(&zero) == 1 {
-		return errors.New("missing ri")
+		return errors.New("ss.SetPartialSignature failed: missing ri")
 	}
 
 	// Compute the challenge
-	e, err := Challenge(&ss.sess, ss.R, ss.P, msg)
+	e, err := Challenge(&ss.sess, &ss.R, &ss.P, msg)
 	if err != nil {
 		return err
 	}
@@ -372,22 +540,65 @@ func (ss *ServerSigner) SetPartialSignature(msg []byte) error {
 	var z Scalar
 	z.Add(&ri, &term)
 
-	ss.partialSig = WirePartialSignature{
-		Index: IntToBytes(int(ServerID)),
-		Z:     z.Bytes(),
+	ss.partialSig = PartialSignature{
+		Index: ServerID,
+		Z:     z,
 	}
 
 	return nil
 }
 
-func (ss *ServerSigner) GetPartialSignature() WirePartialSignature {
+func (ss *ServerSigner) GetPartialSignature() PartialSignature {
 	return ss.partialSig
 }
 
-func (ss *ServerSigner) VerifyNonce(mat *MaterialToSend1, Ri []byte) (bool, error) { // Verify the material received from another participant
-	boolean, err := VerifyNonceAux(&ss.sess, mat.Index, mat.ci, Ri)
-	if err != nil {
-		return false, fmt.Errorf("VerifyNonceAux failed: %w", err)
+func (ss *ServerSigner) CombineSignature(parSig []PartialSignature) error {
+	if len(parSig) != ss.s.params.K {
+		return errors.New("ps.CombineSignature failed: invalid number of partial signatures")
 	}
-	return boolean, nil
+
+	// Reject identity point
+	if ss.R.Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return errors.New("ps.CombineSignature failed: invalid R (identity point)")
+	}
+
+	// Aggregate all partial z values
+	z := ss.partialSig.Z
+
+	for _, el := range parSig {
+
+		if !el.setIndex || !el.setZ {
+			return errors.New("ps.CombineSignature failed: input is not complete")
+		}
+
+		for _, pId := range ss.indices {
+			if pId == el.Index {
+				pId = 0
+			}
+		}
+		z.Add(&z, &el.Z)
+	}
+
+	for _, pId := range ss.indices {
+		if pId != 0 {
+			return errors.New("ps.CombineSignature failed: ID mismatch between ps.indeces and partial signatures received")
+		}
+	}
+
+	var zero Scalar
+	if z.Equal(&zero) == 1 {
+		return errors.New("ps.CombineSignature failed: invalid signature scalar (z = 0)")
+	}
+
+	// Set the signature
+	ss.finalSig = Signature{
+		R: ss.R,
+		Z: z,
+	}
+
+	return nil
+}
+
+func (ss *ServerSigner) GetSignature() Signature {
+	return ss.finalSig
 }

@@ -5,12 +5,10 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"errors"
-
-	"filippo.io/edwards25519"
 )
 
 // commitNonce calcola H(sess.ID || sess.IndexHash || index || Ri).
-func commitNonce(sess *Session, index ParticipantID, Ri []byte) []byte {
+func commitNonce(sess *Session, index ParticipantID, Ri Point) []byte {
 	h := sha256.New()
 	h.Write(sess.id)
 	h.Write(sess.indexHash)
@@ -19,11 +17,11 @@ func commitNonce(sess *Session, index ParticipantID, Ri []byte) []byte {
 	binary.BigEndian.PutUint32(tmp[:], uint32(index))
 	h.Write(tmp[:])
 
-	h.Write(Ri)
+	h.Write(Ri.Bytes())
 	return h.Sum(nil)
 }
 
-func VerifyNonceAux(sess *Session, index ParticipantID, commit, Ri []byte) (bool, error) {
+func VerifyNonceAux(sess *Session, index ParticipantID, commit []byte, Ri Point) (bool, error) {
 	if sess == nil {
 		return false, errors.New("VerifyNonceAux failed: sess is nil")
 	}
@@ -34,11 +32,6 @@ func VerifyNonceAux(sess *Session, index ParticipantID, commit, Ri []byte) (bool
 
 	if len(commit) != sha256.Size {
 		return false, errors.New("VerifyNonceAux failed: commit has incorrect length")
-	}
-
-	var R edwards25519.Point
-	if _, err := R.SetBytes(Ri); err != nil {
-		return false, errors.New("VerifyNonceAux failed: failed to set Ri")
 	}
 
 	sum := commitNonce(sess, index, Ri)
