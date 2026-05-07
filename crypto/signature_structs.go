@@ -215,24 +215,76 @@ func (m *MaterialToSend2) GetRi() Point {
 
 // Participant
 type ParticipantSigner struct {
-	p               Participant
-	P               Point
-	indices         []ParticipantID
-	R               Point
-	n               NonceShare
-	sess            Session
-	materialToSend1 MaterialToSend1  // material to send to others at first
-	materialToSend2 MaterialToSend2  // material to send to others at second
-	partialSig      PartialSignature // material to send to others at third
-	finalSig        Signature
+	p                   Participant
+	P                   Point
+	indices             []ParticipantID
+	lagrangeCoefficient Scalar
+	R                   Point
+	n                   NonceShare
+	sess                Session
+	materialToSend1     MaterialToSend1  // material to send to others at first
+	materialToSend2     MaterialToSend2  // material to send to others at second
+	partialSig          PartialSignature // material to send to others at third
+	finalSig            Signature
 }
 
-func (ps *ParticipantSigner) SetParticipant(p Participant) {
-	ps.p = p
+func (ps *ParticipantSigner) SetLagrangeCoefficient() {
+	// if p.id is not in ids, then p.lagrangeCoefficient = 0
+	m := map[ParticipantID]bool{}
+	for _, id := range ps.indices {
+		m[id] = true
+	}
+	// if p.id is not in ids, then p.lagrangeCoefficient = 0,
+	// because p does not participate in the reconstruction and therefore
+	// his share does not contribute to the reconstruction of the secret
+
+	if !m[ps.p.id] {
+		ps.lagrangeCoefficient = Scalar{}
+		return
+	}
+	var aus Scalar
+	ps.lagrangeCoefficient.Set(&One)                               // coeff = one
+	aus.Set(&One)                                                  // aus = one
+	aus.Subtract(&aus, &alpha)                                     // aus = 1-alpha
+	aus.Invert(&aus)                                               // aus = 1/(1-alpha)
+	ps.lagrangeCoefficient.Multiply(&ps.lagrangeCoefficient, &aus) // coeff = alpha / (1 - alpha)
+
+	var term Scalar
+	term.Set(&One) // term = one
+	for _, id := range ps.indices {
+		if id == ps.p.id {
+			continue
+		} else {
+			var aus2 Scalar
+			var aus3 Scalar
+			aus2.Set(&One)
+			ScalarPow(&alpha, uint8(id-1), &aus2)
+			aus3.Set(&One)
+			ScalarPow(&alpha, uint8(ps.p.id-1), &aus3)
+			aus3.Subtract(&aus3, &aus2) // aus3 = alpha^{id-1} - alpha^{p.id-1}
+			aus3.Invert(&aus3)          // aus3 = 1/(alpha^{id-1} - alpha^{p.id-1})
+			aus2.Multiply(&aus2, &aus3) // aus2 = alpha^{id-1} / (alpha^{id-1} - alpha^{p.id-1})
+			term.Multiply(&term, &aus2)
+		}
+	}
+	ps.lagrangeCoefficient.Multiply(&ps.lagrangeCoefficient, &term) // coeff = alpha / (1 - alpha) * product_{j!=i} (alpha^{id-1} / (alpha^{id-1} - alpha^{p.id-1}))
 }
 
-func (ps *ParticipantSigner) GetParticipant() Participant {
-	return ps.p
+func (ps *ParticipantSigner) GetLagrangeCoefficient() Scalar {
+	return ps.lagrangeCoefficient
+}
+
+// Server
+
+func (ps *ParticipantSigner) SetParticipant(p *Participant) {
+	if p == nil {
+		return
+	}
+	ps.p = *p
+}
+
+func (ps *ParticipantSigner) GetParticipant() *Participant {
+	return &ps.p
 }
 
 func (ps *ParticipantSigner) SetP(P Point) {
@@ -320,7 +372,7 @@ func (ps *ParticipantSigner) SetPartialSignature(msg []byte) error {
 	var zero Scalar
 
 	share := ps.p.GetShare()
-	lambda := ps.p.GetLagrangeCoefficient()
+	lambda := ps.GetLagrangeCoefficient()
 
 	ri := ps.n.Getri()
 
@@ -416,23 +468,24 @@ func (ps *ParticipantSigner) GetSignature() Signature {
 
 // Server
 type ServerSigner struct {
-	s               Server
-	P               Point
-	R               Point
-	n               NonceShare
-	indices         []ParticipantID
-	sess            Session
-	materialToSend1 MaterialToSend1  // material to send to others at first
-	materialToSend2 MaterialToSend2  // material to send to others at second
-	partialSig      PartialSignature // material to send to others at third
-	finalSig        Signature
+	s                   Server
+	P                   Point
+	lagrangeCoefficient Scalar
+	R                   Point
+	n                   NonceShare
+	indices             []ParticipantID
+	sess                Session
+	materialToSend1     MaterialToSend1  // material to send to others at first
+	materialToSend2     MaterialToSend2  // material to send to others at second
+	partialSig          PartialSignature // material to send to others at third
+	finalSig            Signature
 }
 
-func (ss *ServerSigner) SetParticipant(s Server) {
+func (ss *ServerSigner) SetServer(s Server) {
 	ss.s = s
 }
 
-func (ss *ServerSigner) GetParticipant() Server {
+func (ss *ServerSigner) GetServer() Server {
 	return ss.s
 }
 
@@ -444,23 +497,32 @@ func (ss *ServerSigner) GetP() Point {
 	return ss.P
 }
 
-func (ss *ServerSigner) GetS() Point {
-	return ss.P
+func (ss *ServerSigner) SetLagrangeCoefficient() {
+	var aus Scalar
+	ss.lagrangeCoefficient.Set(&alpha)                             // coeff = alpha
+	aus.Set(&alpha)                                                // aus = alpha
+	aus.Subtract(&aus, &One)                                       // aus = alpha - 1
+	aus.Invert(&aus)                                               // aus = 1/(alpha - 1)
+	ss.lagrangeCoefficient.Multiply(&ss.lagrangeCoefficient, &aus) // coeff = alpha / (alpha - 1)
 }
 
-func (ss *ServerSigner) SetN(n NonceShare) {
+func (ss *ServerSigner) GetLagrangeCoefficient() Scalar {
+	return ss.lagrangeCoefficient
+}
+
+func (ss *ServerSigner) SetNonce(n NonceShare) {
 	ss.n = n
 }
 
-func (ss *ServerSigner) GetN() NonceShare {
+func (ss *ServerSigner) GetNonce() NonceShare {
 	return ss.n
 }
 
-func (ss *ServerSigner) SetInd(ind []ParticipantID) {
+func (ss *ServerSigner) SetIndices(ind []ParticipantID) {
 	ss.indices = ind
 }
 
-func (ss *ServerSigner) GetInd() []ParticipantID {
+func (ss *ServerSigner) GetIndices() []ParticipantID {
 	return ss.indices
 }
 
@@ -509,7 +571,7 @@ func (ss *ServerSigner) SetPartialSignature(msg []byte) error {
 	var zero Scalar
 
 	share := ss.s.GetShare()
-	lambda := ss.s.GetLagrangeCoefficient()
+	lambda := ss.GetLagrangeCoefficient()
 
 	ri := ss.n.Getri()
 
@@ -554,12 +616,12 @@ func (ss *ServerSigner) GetPartialSignature() PartialSignature {
 
 func (ss *ServerSigner) CombineSignature(parSig []PartialSignature) error {
 	if len(parSig) != ss.s.params.K {
-		return errors.New("ps.CombineSignature failed: invalid number of partial signatures")
+		return errors.New("ss.CombineSignature failed: invalid number of partial signatures")
 	}
 
 	// Reject identity point
 	if ss.R.Equal(edwards25519.NewIdentityPoint()) == 1 {
-		return errors.New("ps.CombineSignature failed: invalid R (identity point)")
+		return errors.New("ss.CombineSignature failed: invalid R (identity point)")
 	}
 
 	// Aggregate all partial z values
@@ -568,7 +630,7 @@ func (ss *ServerSigner) CombineSignature(parSig []PartialSignature) error {
 	for _, el := range parSig {
 
 		if !el.setIndex || !el.setZ {
-			return errors.New("ps.CombineSignature failed: input is not complete")
+			return errors.New("ss.CombineSignature failed: input is not complete")
 		}
 
 		for _, pId := range ss.indices {
@@ -581,13 +643,13 @@ func (ss *ServerSigner) CombineSignature(parSig []PartialSignature) error {
 
 	for _, pId := range ss.indices {
 		if pId != 0 {
-			return errors.New("ps.CombineSignature failed: ID mismatch between ps.indeces and partial signatures received")
+			return errors.New("ss.CombineSignature failed: ID mismatch between ps.indeces and partial signatures received")
 		}
 	}
 
 	var zero Scalar
 	if z.Equal(&zero) == 1 {
-		return errors.New("ps.CombineSignature failed: invalid signature scalar (z = 0)")
+		return errors.New("ss.CombineSignature failed: invalid signature scalar (z = 0)")
 	}
 
 	// Set the signature

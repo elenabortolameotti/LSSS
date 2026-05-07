@@ -56,20 +56,24 @@ func main() {
 		fmt.Println("Gianni's share is NOT consistent with the commitment.")
 	}
 
+	GianniS := new(crypto.ParticipantSigner)
+
+	GianniS.SetParticipant(Gianni)
 	ids := []crypto.ParticipantID{1, 3, 4}
+	GianniS.SetIndices(ids)
+	GianniS.SetLagrangeCoefficient()
 
-	Gianni.SetLagrangeCoefficient(ids)
-
-	lambdaGianni := Gianni.GetLagrangeCoefficient()
+	lambdaGianni := GianniS.GetLagrangeCoefficient()
 
 	// Stampa il coefficiente di Lagrange di Gianni
 	fmt.Println(lambdaGianni)
 
 	//Controlliamo la correttezza dei coefficienti di Lagrange
 
-	participants := make([]*crypto.Participant, len(ids))
+	participants := make([]*crypto.ParticipantSigner, len(ids))
 	for i, id := range ids {
 		p := new(crypto.Participant)
+		ps := new(crypto.ParticipantSigner)
 		err := p.SetID(id)
 		if err != nil {
 			panic(err)
@@ -84,21 +88,24 @@ func main() {
 		}
 
 		fmt.Printf("Participant %d consistent: %v\n", id, ok)
+		ps.SetParticipant(p)
+		ps.SetIndices(ids)
+		ps.SetLagrangeCoefficient()
 
-		p.SetLagrangeCoefficient(ids)
-
-		aus := p.GetLagrangeCoefficient()
+		aus := ps.GetLagrangeCoefficient()
 		fmt.Printf(
 			"Participant %d: %x\n",
 			id,
 			(&aus).Bytes(),
 		)
 
-		participants[i] = p
+		participants[i] = ps
 	}
 
 	server := new(crypto.Server)
+	servers := new(crypto.ServerSigner)
 	server.SetShare(dealer.GetServerShare())
+	servers.SetServer(*server)
 	boolServerConsistent, err := server.VerifyConsistency(dealer.GetComm())
 	if err != nil {
 		panic(err)
@@ -108,25 +115,26 @@ func main() {
 	} else {
 		fmt.Println("Server's share is NOT consistent with the commitment.")
 	}
-	server.SetLagrangeCoefficient(ids)
+	servers.SetIndices(ids)
+	servers.SetLagrangeCoefficient()
 
-	aus2 := server.GetLagrangeCoefficient()
+	aus2 := servers.GetLagrangeCoefficient()
 	fmt.Printf("Lambda server: %x\n", (&aus2).Bytes())
 
 	var reconstructed crypto.Scalar
 	var term crypto.Scalar
 
 	aus3 := server.GetShare()
-	aus4 := server.GetLagrangeCoefficient()
+	aus4 := servers.GetLagrangeCoefficient()
 
 	// reconstructed += lambda_server * server_share
 	term.Multiply(&aus3, &aus4)
 	reconstructed.Add(&reconstructed, &term)
 
 	// reconstructed += lambda_i * share_i
-	for _, p := range participants {
-		lambda := p.GetLagrangeCoefficient()
-		share := p.GetShare()
+	for _, ps := range participants {
+		lambda := ps.GetLagrangeCoefficient()
+		share := ps.GetParticipant().GetShare()
 
 		term.Multiply(&lambda, &share)
 		reconstructed.Add(&reconstructed, &term)
