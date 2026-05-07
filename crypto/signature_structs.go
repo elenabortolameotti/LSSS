@@ -218,6 +218,7 @@ type ParticipantSigner struct {
 	p                   Participant
 	P                   Point
 	indices             []ParticipantID
+	indicesSet          bool
 	lagrangeCoefficient Scalar
 	R                   Point
 	n                   NonceShare
@@ -228,20 +229,22 @@ type ParticipantSigner struct {
 	finalSig            Signature
 }
 
-func (ps *ParticipantSigner) SetLagrangeCoefficient() {
-	// if p.id is not in ids, then p.lagrangeCoefficient = 0
-	m := map[ParticipantID]bool{}
-	for _, id := range ps.indices {
-		m[id] = true
+func (ps *ParticipantSigner) SetLagrangeCoefficient() error {
+	if !ps.indicesSet {
+		return errors.New("ps.SetLagrangeCoefficient failed: indices not set")
 	}
-	// if p.id is not in ids, then p.lagrangeCoefficient = 0,
-	// because p does not participate in the reconstruction and therefore
-	// his share does not contribute to the reconstruction of the secret
 
-	if !m[ps.p.id] {
-		ps.lagrangeCoefficient = Scalar{}
-		return
+	psIsPresent := false
+	for _, id := range ps.indices {
+		if id == ps.p.id {
+			psIsPresent = true
+		}
 	}
+
+	if !psIsPresent {
+		return errors.New("ps.SetLagrangeCoefficient failed: current participant is not a signer")
+	}
+
 	var aus Scalar
 	ps.lagrangeCoefficient.Set(&One)                               // coeff = one
 	aus.Set(&One)                                                  // aus = one
@@ -268,6 +271,7 @@ func (ps *ParticipantSigner) SetLagrangeCoefficient() {
 		}
 	}
 	ps.lagrangeCoefficient.Multiply(&ps.lagrangeCoefficient, &term) // coeff = alpha / (1 - alpha) * product_{j!=i} (alpha^{id-1} / (alpha^{id-1} - alpha^{p.id-1}))
+	return nil
 }
 
 func (ps *ParticipantSigner) GetLagrangeCoefficient() Scalar {
@@ -297,6 +301,7 @@ func (ps *ParticipantSigner) GetP() Point {
 
 func (ps *ParticipantSigner) SetIndices(inds []ParticipantID) {
 	ps.indices = inds
+	ps.indicesSet = true
 }
 
 func (ps *ParticipantSigner) GetIndices() []ParticipantID {
@@ -474,6 +479,7 @@ type ServerSigner struct {
 	R                   Point
 	n                   NonceShare
 	indices             []ParticipantID
+	indicesSet          bool
 	sess                Session
 	materialToSend1     MaterialToSend1  // material to send to others at first
 	materialToSend2     MaterialToSend2  // material to send to others at second
@@ -497,13 +503,17 @@ func (ss *ServerSigner) GetP() Point {
 	return ss.P
 }
 
-func (ss *ServerSigner) SetLagrangeCoefficient() {
+func (ss *ServerSigner) SetLagrangeCoefficient() error {
+	if !ss.indicesSet {
+		return errors.New("ps.SetLagrangeCoefficient failed: indices not set")
+	}
 	var aus Scalar
 	ss.lagrangeCoefficient.Set(&alpha)                             // coeff = alpha
 	aus.Set(&alpha)                                                // aus = alpha
 	aus.Subtract(&aus, &One)                                       // aus = alpha - 1
 	aus.Invert(&aus)                                               // aus = 1/(alpha - 1)
 	ss.lagrangeCoefficient.Multiply(&ss.lagrangeCoefficient, &aus) // coeff = alpha / (alpha - 1)
+	return nil
 }
 
 func (ss *ServerSigner) GetLagrangeCoefficient() Scalar {
@@ -520,6 +530,7 @@ func (ss *ServerSigner) GetNonce() NonceShare {
 
 func (ss *ServerSigner) SetIndices(ind []ParticipantID) {
 	ss.indices = ind
+	ss.indicesSet = true
 }
 
 func (ss *ServerSigner) GetIndices() []ParticipantID {
