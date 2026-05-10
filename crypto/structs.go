@@ -316,8 +316,8 @@ func (p *Participant) VerifyConsistency(comm Commitment) (bool, error) {
 		}
 	} else {
 		lhs := comm[1]
-		lhs.ScalarMult(&alpha, &lhs) // lhs = comm[1]^alpha
-		lhs.Add(&lhs, &comm[0])      // lhs = comm[1]^alpha + comm[0]
+		lhs.ScalarMult(&alpha, &lhs)
+		lhs.Add(&lhs, &comm[0])
 		var aus1 Scalar
 		var aus2 Point
 

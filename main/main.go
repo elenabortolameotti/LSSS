@@ -322,7 +322,7 @@ func main() {
 	cornelioM2 := CornelioS.GetMaterialToSend2()
 
 	// Verify nonces
-	ok, err := ServerS.VerifyNonce(&pinoM1, pinoM2.GetRi())
+	ok, err := ServerS.VerifyNonce(&pinoM1, &pinoM2)
 	if err != nil {
 		panic(err)
 	}
@@ -330,7 +330,7 @@ func main() {
 		panic("ServerS rejected Pino nonce")
 	}
 
-	ok, err = ServerS.VerifyNonce(&gianniM1, gianniM2.GetRi())
+	ok, err = ServerS.VerifyNonce(&gianniM1, &gianniM2)
 	if err != nil {
 		panic(err)
 	}
@@ -338,7 +338,7 @@ func main() {
 		panic("ServerS rejected Gianni nonce")
 	}
 
-	ok, err = ServerS.VerifyNonce(&cornelioM1, cornelioM2.GetRi())
+	ok, err = ServerS.VerifyNonce(&cornelioM1, &cornelioM2)
 	if err != nil {
 		panic(err)
 	}
