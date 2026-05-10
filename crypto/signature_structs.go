@@ -282,9 +282,9 @@ type ParticipantSigner struct {
 	R                   Point  // Aggregated nonce R = sum R_i.
 	n                   NonceShare
 	sess                Session
-	materialToSend1     MaterialToSend1  // material to send to others at first
-	materialToSend2     MaterialToSend2  // material to send to others at second
-	partialSig          PartialSignature // material to send to others at third
+	materialToSend1     MaterialToSend1  // Round 1: nonce commitment c_i.
+	materialToSend2     MaterialToSend2  // Round 2: nonce opening R_i.
+	partialSig          PartialSignature // Round 3: partial signature z_i.
 	finalSig            Signature
 }
 
@@ -611,9 +611,9 @@ type ServerSigner struct {
 	indices             []ParticipantID
 	indicesSet          bool
 	sess                Session
-	materialToSend1     MaterialToSend1  // material to send to others at first
-	materialToSend2     MaterialToSend2  // material to send to others at second
-	partialSig          PartialSignature // material to send to others at third
+	materialToSend1     MaterialToSend1  // Round 1: nonce commitment c_i.
+	materialToSend2     MaterialToSend2  // Round 2: nonce opening R_i.
+	partialSig          PartialSignature // Round 3: partial signature z_i.
 	finalSig            Signature
 }
 
