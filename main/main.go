@@ -249,7 +249,8 @@ func main() {
 
 	var sess crypto.Session
 
-	if err := sess.SetID(); err != nil {
+	vec := []byte{1, 1, 1, 1, 1, 1}
+	if err := sess.SetID(vec); err != nil {
 		panic(err)
 	}
 
@@ -398,8 +399,10 @@ func main() {
 	zPino := PinoS.GetPartialSignature()
 	zGianni := GianniS.GetPartialSignature()
 	zCornelio := CornelioS.GetPartialSignature()
+	zServer := ServerS.GetPartialSignature()
 
 	partialsForServer := []crypto.PartialSignature{
+		zServer,
 		zPino,
 		zGianni,
 		zCornelio,
