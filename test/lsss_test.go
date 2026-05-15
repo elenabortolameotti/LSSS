@@ -231,6 +231,9 @@ func TestLSSSFullSigningFlow(t *testing.T) {
 	S := new(crypto.Server)
 	ServerS := new(crypto.ServerSigner)
 
+	// IMPORTANT:
+	// indices contains only the signing participants.
+	// ServerID is handled separately by the protocol.
 	ids := []crypto.ParticipantID{1, 3, 4}
 
 	ServerS.SetP(P)
@@ -370,23 +373,45 @@ func TestLSSSFullSigningFlow(t *testing.T) {
 
 	logSection(t, "Final signature combination")
 
+	zServer := ServerS.GetPartialSignature()
 	zPino := PinoS.GetPartialSignature()
 	zGianni := GianniS.GetPartialSignature()
 	zCornelio := CornelioS.GetPartialSignature()
 
-	partialsForServer := []crypto.PartialSignature{
+	// As in SetR, CombineSignature receives one contribution from each signing
+	// party: the server and all participants in the session.
+	allPartials := []crypto.PartialSignature{
+		zServer,
 		zPino,
 		zGianni,
 		zCornelio,
 	}
 
-	if err := ServerS.CombineSignature(partialsForServer); err != nil {
-		t.Fatalf("failed to combine threshold signature: %v", err)
+	if err := ServerS.CombineSignature(allPartials); err != nil {
+		t.Fatalf("server failed to combine threshold signature: %v", err)
 	}
 
-	sig := ServerS.GetSignature()
+	sigServer := ServerS.GetSignature()
 
-	logOK(t, "Final threshold signature combined")
+	logOK(t, "Server combined the final threshold signature")
+
+	if err := PinoS.CombineSignature(allPartials); err != nil {
+		t.Fatalf("Pino failed to combine threshold signature: %v", err)
+	}
+
+	sigPino := PinoS.GetSignature()
+
+	logOK(t, "Pino combined the final threshold signature")
+
+	if sigServer.R.Equal(&sigPino.R) != 1 {
+		t.Fatalf("server-combined and Pino-combined signatures have different R")
+	}
+
+	if sigServer.Z.Equal(&sigPino.Z) != 1 {
+		t.Fatalf("server-combined and Pino-combined signatures have different Z")
+	}
+
+	logOK(t, "Server-combined and Pino-combined signatures are identical")
 
 	// -------------------------------------------------------------------------
 	// Reconstruction sanity check
@@ -452,14 +477,426 @@ func TestLSSSFullSigningFlow(t *testing.T) {
 
 	logSection(t, "Final signature verification")
 
+	valid, err := crypto.VerifySignature(P, msg, sigServer, sess)
+	if err != nil {
+		t.Fatalf("server-combined signature verification returned error: %v", err)
+	}
+	if !valid {
+		t.Fatalf("server-combined final threshold signature is NOT valid")
+	}
+
+	logOK(t, "Server-combined final threshold signature verified successfully")
+
+	valid, err = crypto.VerifySignature(P, msg, sigPino, sess)
+	if err != nil {
+		t.Fatalf("Pino-combined signature verification returned error: %v", err)
+	}
+	if !valid {
+		t.Fatalf("Pino-combined final threshold signature is NOT valid")
+	}
+
+	logOK(t, "Pino-combined final threshold signature verified successfully")
+}
+
+func TestParticipantRejectsTamperedShare(t *testing.T) {
+	logSection(t, "Security Test: Participant Rejects Tampered Share")
+
+	n := 5
+	k := 3
+
+	dealer := new(crypto.Dealer)
+
+	if err := dealer.SetTsParameters(n, k); err != nil {
+		t.Fatalf("failed to set threshold parameters: %v", err)
+	}
+	if err := dealer.SetSecret(); err != nil {
+		t.Fatalf("failed to generate dealer secret: %v", err)
+	}
+
+	friends := []string{"Gianni", "Pino", "Gino", "Cornelio", "Beppe"}
+	if err := dealer.SetFriends(friends); err != nil {
+		t.Fatalf("failed to set friends: %v", err)
+	}
+	if err := dealer.SetCommAndShares(); err != nil {
+		t.Fatalf("failed to generate commitment and shares: %v", err)
+	}
+
+	logOK(t, "Dealer generated valid commitment and shares")
+
+	p := new(crypto.Participant)
+
+	if err := p.SetID(1); err != nil {
+		t.Fatalf("failed to set participant ID: %v", err)
+	}
+
+	p.SetName("Pino")
+
+	share := dealer.GetParticipantShares(0)
+
+	var tamperedShare crypto.Scalar
+	tamperedShare.Add(&share, &crypto.One)
+
+	p.SetShare(tamperedShare)
+
+	ok, err := p.VerifyConsistency(*dealer.GetComm())
+	if err != nil {
+		t.Fatalf("VerifyConsistency returned unexpected error: %v", err)
+	}
+
+	if ok {
+		t.Fatal("participant accepted a tampered share as valid")
+	}
+
+	logOK(t, "Participant correctly rejected the tampered share")
+}
+
+func TestTamperedPartialSignature(t *testing.T) {
+	logSection(t, "Security Test: Tampered Partial Signature")
+
+	n := 4
+	k := 2
+
+	dealer := new(crypto.Dealer)
+
+	if err := dealer.SetTsParameters(n, k); err != nil {
+		t.Fatalf("params failed: %v", err)
+	}
+	if err := dealer.SetSecret(); err != nil {
+		t.Fatalf("secret failed: %v", err)
+	}
+
+	friends := []string{"A", "B", "C", "D"}
+	if err := dealer.SetFriends(friends); err != nil {
+		t.Fatalf("friends failed: %v", err)
+	}
+	if err := dealer.SetCommAndShares(); err != nil {
+		t.Fatalf("shares failed: %v", err)
+	}
+
+	secret := dealer.GetSecret()
+	P := *new(crypto.Point).ScalarBaseMult(&secret)
+
+	// IMPORTANT:
+	// indices contains only the signing participants.
+	ids := []crypto.ParticipantID{1, 2}
+
+	var sess crypto.Session
+	if err := sess.SetID([]byte{0x11, 0x22, 0x33}); err != nil {
+		t.Fatalf("failed to set session ID: %v", err)
+	}
+	sess.SetIndices(ids)
+	sess.SetIndexHash(ids)
+
+	server := new(crypto.Server)
+	server.SetShare(dealer.GetServerShare())
+
+	aux := dealer.GetTsParameters()
+	server.SetParams(&aux)
+
+	ss := new(crypto.ServerSigner)
+	ss.SetServer(*server)
+	ss.SetP(P)
+	ss.SetIndices(ids)
+	ss.SetSession(&sess)
+
+	if err := ss.SetLagrangeCoefficient(); err != nil {
+		t.Fatalf("server lagrange failed: %v", err)
+	}
+
+	p1 := checkShareConsistency(t, "P1", 1, 0, dealer)
+	p2 := checkShareConsistency(t, "P2", 2, 1, dealer)
+
+	ps1 := initParticipantSigner(t, "P1", p1, P, ids, &sess)
+	ps2 := initParticipantSigner(t, "P2", p2, P, ids, &sess)
+
+	nonceServer := makeServerNonce(t, ss)
+	nonce1 := makeParticipantNonce(t, ps1)
+	nonce2 := makeParticipantNonce(t, ps2)
+
+	allM2 := []crypto.MaterialToSend2{
+		makeMaterial2(t, nonceServer),
+		makeMaterial2(t, nonce1),
+		makeMaterial2(t, nonce2),
+	}
+
+	if err := ss.SetR(allM2); err != nil {
+		t.Fatalf("server SetR failed: %v", err)
+	}
+	if err := ps1.SetR(allM2); err != nil {
+		t.Fatalf("ps1 SetR failed: %v", err)
+	}
+	if err := ps2.SetR(allM2); err != nil {
+		t.Fatalf("ps2 SetR failed: %v", err)
+	}
+
+	msg := []byte("hello")
+
+	if err := ss.SetPartialSignature(msg); err != nil {
+		t.Fatalf("server partial signature failed: %v", err)
+	}
+	if err := ps1.SetPartialSignature(msg); err != nil {
+		t.Fatalf("ps1 partial signature failed: %v", err)
+	}
+	if err := ps2.SetPartialSignature(msg); err != nil {
+		t.Fatalf("ps2 partial signature failed: %v", err)
+	}
+
+	tampered := ps1.GetPartialSignature()
+
+	// Tamper with P1's partial signature while keeping its index unchanged.
+	tampered.Z.Add(&tampered.Z, &crypto.One)
+
+	attacked := []crypto.PartialSignature{
+		ss.GetPartialSignature(),
+		tampered,
+		ps2.GetPartialSignature(),
+	}
+
+	if err := ss.CombineSignature(attacked); err != nil {
+		t.Fatalf("combine failed unexpectedly: %v", err)
+	}
+
+	sig := ss.GetSignature()
+
 	valid, err := crypto.VerifySignature(P, msg, sig, sess)
 	if err != nil {
-		t.Fatalf("signature verification returned error: %v", err)
+		t.Fatalf("VerifySignature returned unexpected error: %v", err)
 	}
 
-	if !valid {
-		t.Fatalf("final threshold signature is NOT valid")
+	if valid {
+		t.Fatalf("tampered partial signature produced a valid final signature")
 	}
 
-	logOK(t, "Final threshold signature verified successfully")
+	logOK(t, "Tampered partial signature produced an invalid final signature")
+}
+
+func TestReplayAttackDifferentSession(t *testing.T) {
+	logSection(t, "Security Test: Replay Attack Across Sessions")
+
+	n := 5
+	k := 3
+
+	// -------------------------------------------------------------------------
+	// Dealer setup
+	// -------------------------------------------------------------------------
+
+	dealer := new(crypto.Dealer)
+
+	if err := dealer.SetTsParameters(n, k); err != nil {
+		t.Fatalf("failed params: %v", err)
+	}
+
+	if err := dealer.SetSecret(); err != nil {
+		t.Fatalf("failed secret: %v", err)
+	}
+
+	friends := []string{"A", "B", "C", "D", "E"}
+	if err := dealer.SetFriends(friends); err != nil {
+		t.Fatalf("failed friends: %v", err)
+	}
+
+	if err := dealer.SetCommAndShares(); err != nil {
+		t.Fatalf("failed shares: %v", err)
+	}
+
+	secret := dealer.GetSecret()
+
+	var P crypto.Point
+	P.ScalarBaseMult(&secret)
+
+	// IMPORTANT:
+	// indices contains only the signing participants.
+	// ServerID is handled separately by the protocol.
+	ids := []crypto.ParticipantID{1, 3, 4}
+
+	msg := []byte("hello")
+
+	// -------------------------------------------------------------------------
+	// Share consistency verification
+	// -------------------------------------------------------------------------
+
+	p1 := checkShareConsistency(t, "P1", 1, 0, dealer)
+	p3 := checkShareConsistency(t, "P3", 3, 2, dealer)
+	p4 := checkShareConsistency(t, "P4", 4, 3, dealer)
+
+	// =========================================================================
+	// Session 1: legitimate session from which we steal one old partial
+	// =========================================================================
+
+	logSection(t, "Session 1 setup")
+
+	var sess1 crypto.Session
+	if err := sess1.SetID([]byte{1, 0, 0}); err != nil {
+		t.Fatalf("failed session1 ID: %v", err)
+	}
+	sess1.SetIndices(ids)
+	sess1.SetIndexHash(ids)
+
+	server1 := new(crypto.Server)
+	server1.SetShare(dealer.GetServerShare())
+
+	aux := dealer.GetTsParameters()
+	server1.SetParams(&aux)
+
+	serverSigner1 := new(crypto.ServerSigner)
+	serverSigner1.SetServer(*server1)
+	serverSigner1.SetP(P)
+	serverSigner1.SetIndices(ids)
+	serverSigner1.SetSession(&sess1)
+
+	if err := serverSigner1.SetLagrangeCoefficient(); err != nil {
+		t.Fatalf("server1 lagrange failed: %v", err)
+	}
+
+	ps1Sess1 := initParticipantSigner(t, "P1-S1", p1, P, ids, &sess1)
+	ps3Sess1 := initParticipantSigner(t, "P3-S1", p3, P, ids, &sess1)
+	ps4Sess1 := initParticipantSigner(t, "P4-S1", p4, P, ids, &sess1)
+
+	nonceServer1 := makeServerNonce(t, serverSigner1)
+	nonceP1S1 := makeParticipantNonce(t, ps1Sess1)
+	nonceP3S1 := makeParticipantNonce(t, ps3Sess1)
+	nonceP4S1 := makeParticipantNonce(t, ps4Sess1)
+
+	allM2Sess1 := []crypto.MaterialToSend2{
+		makeMaterial2(t, nonceServer1),
+		makeMaterial2(t, nonceP1S1),
+		makeMaterial2(t, nonceP3S1),
+		makeMaterial2(t, nonceP4S1),
+	}
+
+	if err := serverSigner1.SetR(allM2Sess1); err != nil {
+		t.Fatalf("server1 SetR failed: %v", err)
+	}
+	if err := ps1Sess1.SetR(allM2Sess1); err != nil {
+		t.Fatalf("P1 session1 SetR failed: %v", err)
+	}
+	if err := ps3Sess1.SetR(allM2Sess1); err != nil {
+		t.Fatalf("P3 session1 SetR failed: %v", err)
+	}
+	if err := ps4Sess1.SetR(allM2Sess1); err != nil {
+		t.Fatalf("P4 session1 SetR failed: %v", err)
+	}
+
+	if err := serverSigner1.SetPartialSignature(msg); err != nil {
+		t.Fatalf("server1 partial failed: %v", err)
+	}
+	if err := ps1Sess1.SetPartialSignature(msg); err != nil {
+		t.Fatalf("P1 session1 partial failed: %v", err)
+	}
+	if err := ps3Sess1.SetPartialSignature(msg); err != nil {
+		t.Fatalf("P3 session1 partial failed: %v", err)
+	}
+	if err := ps4Sess1.SetPartialSignature(msg); err != nil {
+		t.Fatalf("P4 session1 partial failed: %v", err)
+	}
+
+	// Replay target: old P1 partial from session 1.
+	replayedPartial := ps1Sess1.GetPartialSignature()
+
+	logOK(t, "Session 1 partial signatures generated")
+
+	// =========================================================================
+	// Session 2: attack target
+	// =========================================================================
+
+	logSection(t, "Session 2 setup")
+
+	var sess2 crypto.Session
+	if err := sess2.SetID([]byte{9, 9, 9}); err != nil {
+		t.Fatalf("failed session2 ID: %v", err)
+	}
+	sess2.SetIndices(ids)
+	sess2.SetIndexHash(ids)
+
+	server2 := new(crypto.Server)
+	server2.SetShare(dealer.GetServerShare())
+	server2.SetParams(&aux)
+
+	serverSigner2 := new(crypto.ServerSigner)
+	serverSigner2.SetServer(*server2)
+	serverSigner2.SetP(P)
+	serverSigner2.SetIndices(ids)
+	serverSigner2.SetSession(&sess2)
+
+	if err := serverSigner2.SetLagrangeCoefficient(); err != nil {
+		t.Fatalf("server2 lagrange failed: %v", err)
+	}
+
+	ps1Sess2 := initParticipantSigner(t, "P1-S2", p1, P, ids, &sess2)
+	ps3Sess2 := initParticipantSigner(t, "P3-S2", p3, P, ids, &sess2)
+	ps4Sess2 := initParticipantSigner(t, "P4-S2", p4, P, ids, &sess2)
+
+	nonceServer2 := makeServerNonce(t, serverSigner2)
+	nonceP1S2 := makeParticipantNonce(t, ps1Sess2)
+	nonceP3S2 := makeParticipantNonce(t, ps3Sess2)
+	nonceP4S2 := makeParticipantNonce(t, ps4Sess2)
+
+	allM2Sess2 := []crypto.MaterialToSend2{
+		makeMaterial2(t, nonceServer2),
+		makeMaterial2(t, nonceP1S2),
+		makeMaterial2(t, nonceP3S2),
+		makeMaterial2(t, nonceP4S2),
+	}
+
+	if err := serverSigner2.SetR(allM2Sess2); err != nil {
+		t.Fatalf("server2 SetR failed: %v", err)
+	}
+	if err := ps1Sess2.SetR(allM2Sess2); err != nil {
+		t.Fatalf("P1 session2 SetR failed: %v", err)
+	}
+	if err := ps3Sess2.SetR(allM2Sess2); err != nil {
+		t.Fatalf("P3 session2 SetR failed: %v", err)
+	}
+	if err := ps4Sess2.SetR(allM2Sess2); err != nil {
+		t.Fatalf("P4 session2 SetR failed: %v", err)
+	}
+
+	if err := serverSigner2.SetPartialSignature(msg); err != nil {
+		t.Fatalf("server2 partial failed: %v", err)
+	}
+	if err := ps1Sess2.SetPartialSignature(msg); err != nil {
+		t.Fatalf("P1 session2 partial failed: %v", err)
+	}
+	if err := ps3Sess2.SetPartialSignature(msg); err != nil {
+		t.Fatalf("P3 session2 partial failed: %v", err)
+	}
+	if err := ps4Sess2.SetPartialSignature(msg); err != nil {
+		t.Fatalf("P4 session2 partial failed: %v", err)
+	}
+
+	logOK(t, "Session 2 fresh partial signatures generated")
+
+	// -------------------------------------------------------------------------
+	// Attack:
+	// replace P1's fresh session2 partial with P1's old session1 partial.
+	// -------------------------------------------------------------------------
+
+	logSection(t, "Replay attack attempt")
+
+	attackedPartials := []crypto.PartialSignature{
+		serverSigner2.GetPartialSignature(),
+		replayedPartial, // old P1 partial from session 1
+		ps3Sess2.GetPartialSignature(),
+		ps4Sess2.GetPartialSignature(),
+	}
+
+	// CombineSignature only aggregates structurally valid partial signatures.
+	// The replay is detected by final signature verification, because the old
+	// partial was computed with a different session/challenge.
+	if err := serverSigner2.CombineSignature(attackedPartials); err != nil {
+		t.Fatalf("combine failed unexpectedly: %v", err)
+	}
+
+	sig := serverSigner2.GetSignature()
+
+	valid, err := crypto.VerifySignature(P, msg, sig, sess2)
+	if err != nil {
+		t.Fatalf("VerifySignature returned unexpected error: %v", err)
+	}
+
+	if valid {
+		t.Fatalf("replayed partial from session1 produced a valid signature in session2")
+	}
+
+	logOK(t, "Replay attack produced an invalid final signature")
 }

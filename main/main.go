@@ -413,7 +413,12 @@ func main() {
 		panic(err)
 	}
 
-	sig := ServerS.GetSignature()
+	err = PinoS.CombineSignature(partialsForServer)
+	if err != nil {
+		panic(err)
+	}
+
+	sig := PinoS.GetSignature()
 
 	lambdaServer := ServerS.GetLagrangeCoefficient()
 	lambdaPino := PinoS.GetLagrangeCoefficient()
