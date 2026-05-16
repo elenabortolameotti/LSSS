@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 
 	"filippo.io/edwards25519"
 )
@@ -88,13 +89,19 @@ func (s *Session) GetIndices() []ParticipantID {
 // This value is included in the Schnorr challenge to bind the signature to the
 // selected reconstruction set.
 func (s *Session) SetIndexHash(ids []ParticipantID) {
+	cp := make([]ParticipantID, len(ids))
+	copy(cp, ids)
+
+	slices.Sort(cp)
+
 	h := sha256.New()
 	tmp := make([]byte, 4)
 
-	for _, id := range ids {
+	for _, id := range cp {
 		binary.BigEndian.PutUint32(tmp, uint32(id))
 		h.Write(tmp)
 	}
+
 	s.indexHash = h.Sum(nil)
 }
 
