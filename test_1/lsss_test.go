@@ -2097,3 +2097,200 @@ func TestWrongParticipantIndexShareMismatch(t *testing.T) {
 
 	logOK(t, "Mismatch correctly rejected by VSS verification")
 }
+
+// Test 11
+func TestWeightedSharesReconstructDealerSecret(t *testing.T) {
+	logSection(t, "LSSS Reconstruction Test: Weighted Shares Reconstruct Dealer Secret")
+
+	n := 5
+	k := 3
+
+	// -------------------------------------------------------------------------
+	// Dealer setup
+	// -------------------------------------------------------------------------
+	logSection(t, "1. Dealer setup")
+
+	dealer := new(crypto.Dealer)
+
+	if err := dealer.SetTsParameters(n, k); err != nil {
+		t.Fatalf("failed to set threshold parameters: %v", err)
+	}
+	logOK(t, fmt.Sprintf("Threshold parameters set: n = %d, k = %d", n, k))
+
+	if err := dealer.SetSecret(); err != nil {
+		t.Fatalf("failed to generate dealer secret: %v", err)
+	}
+	logOK(t, "Dealer secret generated")
+
+	friends := []string{"A", "B", "C", "D", "E"}
+	if err := dealer.SetFriends(friends); err != nil {
+		t.Fatalf("failed to set friends: %v", err)
+	}
+	logOK(t, fmt.Sprintf("Participants registered by dealer: %v", friends))
+
+	if err := dealer.SetCommAndShares(); err != nil {
+		t.Fatalf("failed to generate commitments and shares: %v", err)
+	}
+	logOK(t, "Dealer generated VSS commitments, participant shares, and server share")
+
+	secret := dealer.GetSecret()
+	logOK(t, "Dealer secret retrieved for reconstruction check")
+
+	var P crypto.Point
+	P.ScalarBaseMult(&secret)
+	logOK(t, "Public key P = secret * G computed")
+
+	// -------------------------------------------------------------------------
+	// Authorized reconstruction set
+	// -------------------------------------------------------------------------
+	logSection(t, "2. Authorized reconstruction set")
+
+	// IMPORTANT:
+	// indices contains only participant IDs.
+	// ServerID is handled separately by the protocol.
+	ids := []crypto.ParticipantID{1, 3, 4}
+
+	logOK(t, fmt.Sprintf("Selected participant indices: %v", ids))
+	logOK(t, "ServerID is not included in indices and is handled separately")
+
+	// -------------------------------------------------------------------------
+	// Session setup
+	// -------------------------------------------------------------------------
+	logSection(t, "3. Session setup")
+
+	var sess crypto.Session
+
+	if err := sess.SetID(testSessionID(0x51)); err != nil {
+		t.Fatalf("failed to set session ID: %v", err)
+	}
+	logOK(t, fmt.Sprintf("Session ID set: %x", sess.GetID()))
+
+	if err := sess.SetIndices(ids); err != nil {
+		t.Fatalf("failed to set session indices: %v", err)
+	}
+	sess.SetIndexHash(ids)
+
+	logOK(t, "Session indices and index hash set")
+
+	// -------------------------------------------------------------------------
+	// Server setup
+	// -------------------------------------------------------------------------
+	logSection(t, "4. Server setup")
+
+	server := new(crypto.Server)
+
+	server.SetShare(dealer.GetServerShare())
+	logOK(t, "Server share assigned")
+
+	aux := dealer.GetTsParameters()
+	server.SetParams(&aux)
+	logOK(t, "Threshold parameters assigned to server")
+
+	ss := new(crypto.ServerSigner)
+
+	ss.SetServer(*server)
+	ss.SetP(P)
+
+	if err := ss.SetIndices(ids); err != nil {
+		t.Fatalf("failed to set server signer indices: %v", err)
+	}
+	ss.SetSession(&sess)
+
+	if err := ss.SetLagrangeCoefficient(); err != nil {
+		t.Fatalf("failed to compute server Lagrange coefficient: %v", err)
+	}
+	logOK(t, "Server Lagrange coefficient computed")
+
+	// -------------------------------------------------------------------------
+	// Participant setup and VSS verification
+	// -------------------------------------------------------------------------
+	logSection(t, "5. Participant setup and VSS verification")
+
+	p1 := checkShareConsistency(t, "P1", 1, 0, dealer)
+	p3 := checkShareConsistency(t, "P3", 3, 2, dealer)
+	p4 := checkShareConsistency(t, "P4", 4, 3, dealer)
+
+	logOK(t, "All selected participant shares passed VSS consistency verification")
+
+	ps1 := initParticipantSigner(t, "P1", p1, P, ids, &sess)
+	ps3 := initParticipantSigner(t, "P3", p3, P, ids, &sess)
+	ps4 := initParticipantSigner(t, "P4", p4, P, ids, &sess)
+
+	logOK(t, "All participant Lagrange coefficients computed")
+
+	// -------------------------------------------------------------------------
+	// Weighted reconstruction
+	// -------------------------------------------------------------------------
+	logSection(t, "6. Weighted reconstruction")
+
+	lambdaServer := ss.GetLagrangeCoefficient()
+	lambda1 := ps1.GetLagrangeCoefficient()
+	lambda3 := ps3.GetLagrangeCoefficient()
+	lambda4 := ps4.GetLagrangeCoefficient()
+
+	serverFromSigner := ss.GetServer()
+	shareServer := serverFromSigner.GetShare()
+
+	participant1 := ps1.GetParticipant()
+	share1 := participant1.GetShare()
+
+	participant3 := ps3.GetParticipant()
+	share3 := participant3.GetShare()
+
+	participant4 := ps4.GetParticipant()
+	share4 := participant4.GetShare()
+
+	var rec crypto.Scalar
+	var tmp crypto.Scalar
+
+	tmp.Multiply(&lambdaServer, &shareServer)
+	rec.Add(&rec, &tmp)
+	logOK(t, "Added lambda_server * share_server")
+
+	tmp.Multiply(&lambda1, &share1)
+	rec.Add(&rec, &tmp)
+	logOK(t, "Added lambda_1 * share_1")
+
+	tmp.Multiply(&lambda3, &share3)
+	rec.Add(&rec, &tmp)
+	logOK(t, "Added lambda_3 * share_3")
+
+	tmp.Multiply(&lambda4, &share4)
+	rec.Add(&rec, &tmp)
+	logOK(t, "Added lambda_4 * share_4")
+
+	// -------------------------------------------------------------------------
+	// Secret equality check
+	// -------------------------------------------------------------------------
+	logSection(t, "7. Secret equality check")
+
+	if rec.Equal(&secret) != 1 {
+		t.Fatalf("weighted reconstruction does NOT match the dealer secret")
+	}
+
+	logOK(t, "Weighted reconstruction matches the original dealer secret")
+
+	// -------------------------------------------------------------------------
+	// Public key sanity check
+	// -------------------------------------------------------------------------
+	logSection(t, "8. Public key sanity check")
+
+	var recP crypto.Point
+	recP.ScalarBaseMult(&rec)
+
+	var secretP crypto.Point
+	secretP.ScalarBaseMult(&secret)
+
+	if recP.Equal(&secretP) != 1 {
+		t.Fatalf("reconstructed scalar does not produce the same public key")
+	}
+
+	logOK(t, "Reconstructed scalar produces the same public key as the dealer secret")
+
+	if P.Equal(&secretP) != 1 {
+		t.Fatalf("dealer public key does not match secret-derived public key")
+	}
+
+	logOK(t, "Dealer public key matches the public key derived from the secret")
+	logOK(t, "LSSS weighted shares reconstruct the secret correctly")
+}

@@ -642,11 +642,6 @@ func (ps *ParticipantSigner) SetPartialSignature(msg []byte) error {
 		return err
 	}
 
-	fmt.Printf("sign R: %x\n", ps.R.Bytes())
-	fmt.Printf("sign P: %x\n", ps.P.Bytes())
-	fmt.Printf("sign sess.id: %x\n", ps.sess.GetID())
-	fmt.Printf("sign sess.indexHash: %x\n", ps.sess.GetIndexHash())
-
 	// term = e * lambda_i * s_i.
 	var term Scalar
 	term.Multiply(&lambda, &share)
