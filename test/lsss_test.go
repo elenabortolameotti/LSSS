@@ -1383,8 +1383,8 @@ func TestDuplicateParticipantIDsRejected(t *testing.T) {
 	// -------------------------------------------------------------------------
 	logSection(t, "2. Malicious duplicate-ID signing set")
 
-	// Duplicate participant 1 appears twice.
-	// This should NEVER be allowed.
+	// Il partecipante duplicato 1 appare due volte.
+	// Questo deve essere intercettato immediatamente dalle funzioni SetIndices.
 	ids := []crypto.ParticipantID{1, 1, 3}
 
 	logOK(t, fmt.Sprintf("Injected malicious signing set with duplicate IDs: %v", ids))
@@ -1392,7 +1392,7 @@ func TestDuplicateParticipantIDsRejected(t *testing.T) {
 	// -------------------------------------------------------------------------
 	// Session setup
 	// -------------------------------------------------------------------------
-	logSection(t, "3. Session initialization")
+	logSection(t, "3. Session initialization (Early Rejection Test)")
 
 	var sess crypto.Session
 
@@ -1400,15 +1400,19 @@ func TestDuplicateParticipantIDsRejected(t *testing.T) {
 		t.Fatalf("failed session ID: %v", err)
 	}
 
-	sess.SetIndices(ids)
-	sess.SetIndexHash(ids)
+	// Primo controllo: la sessione deve rifiutare i duplicati
+	errSession := sess.SetIndices(ids)
+	if errSession == nil {
+		t.Fatalf("CRITICAL SECURITY FLAW: session.SetIndices accepted duplicate participant IDs")
+	}
+	logOK(t, fmt.Sprintf("Session correctly rejected duplicate IDs with error: %v", errSession))
 
-	logOK(t, "Session initialized with duplicated participant indices")
+	sess.SetIndexHash(ids)
 
 	// -------------------------------------------------------------------------
 	// Server signer initialization
 	// -------------------------------------------------------------------------
-	logSection(t, "4. Server signer validation")
+	logSection(t, "4. Server signer validation (Early Rejection Test)")
 
 	server := new(crypto.Server)
 	server.SetShare(dealer.GetServerShare())
@@ -1417,27 +1421,23 @@ func TestDuplicateParticipantIDsRejected(t *testing.T) {
 	server.SetParams(&aux)
 
 	ss := new(crypto.ServerSigner)
-
 	ss.SetServer(*server)
 	ss.SetP(P)
-	ss.SetIndices(ids)
-	ss.SetSession(&sess)
 
-	err := ss.SetLagrangeCoefficient()
+	// Secondo controllo: anche il ServerSigner deve rifiutare i duplicati
+	errServer := ss.SetIndices(ids)
+	if errServer == nil {
+		t.Fatalf("CRITICAL SECURITY FLAW: serverSigner.SetIndices accepted duplicate participant IDs")
+	}
+	logOK(t, fmt.Sprintf("ServerSigner correctly rejected duplicate IDs with error: %v", errServer))
+
+	ss.SetSession(&sess)
 
 	// -------------------------------------------------------------------------
 	// Security expectation
 	// -------------------------------------------------------------------------
-	logSection(t, "5. Security expectation")
-
-	// Correct behavior:
-	// duplicate IDs must be rejected BEFORE signing.
-	if err == nil {
-		t.Fatalf("CRITICAL SECURITY FLAW: duplicate participant IDs were accepted")
-	}
-
-	logOK(t, "Duplicate participant IDs correctly rejected")
-	logOK(t, fmt.Sprintf("Received expected error: %v", err))
+	logSection(t, "5. Security expectation summary")
+	logOK(t, "Duplicate participant IDs are now proactively blocked at the entrance of the protocol")
 }
 
 // Test 7: ampliamento del test 6. il sistema non si rende subito conto dell'id duplicato

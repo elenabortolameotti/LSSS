@@ -73,9 +73,18 @@ func (s *Session) GetID() []byte {
 	return s.id
 }
 
-// SetIndices stores the friend indices participating in this session.
-func (s *Session) SetIndices(indices []ParticipantID) {
+func (s *Session) SetIndices(indices []ParticipantID) error {
+	seen := make(map[ParticipantID]bool, len(indices))
+
+	for _, id := range indices {
+		if seen[id] {
+			return fmt.Errorf("session.SetIndices failed: duplicate participant ID %d detected", id)
+		}
+		seen[id] = true
+	}
+
 	s.indices = indices
+	return nil
 }
 
 func (s *Session) GetIndices() []ParticipantID {
@@ -381,9 +390,19 @@ func (ps *ParticipantSigner) GetP() Point {
 	return ps.P
 }
 
-func (ps *ParticipantSigner) SetIndices(inds []ParticipantID) {
-	ps.indices = inds
+func (ps *ParticipantSigner) SetIndices(ind []ParticipantID) error {
+	seen := make(map[ParticipantID]bool, len(ind))
+
+	for _, id := range ind {
+		if seen[id] {
+			return fmt.Errorf("participantSigner.SetIndices failed: duplicate participant ID %d detected", id)
+		}
+		seen[id] = true
+	}
+
+	ps.indices = ind
 	ps.indicesSet = true
+	return nil
 }
 
 func (ps *ParticipantSigner) GetIndices() []ParticipantID {
@@ -639,9 +658,19 @@ func (ss *ServerSigner) GetNonce() NonceShare {
 	return ss.n
 }
 
-func (ss *ServerSigner) SetIndices(ind []ParticipantID) {
+func (ss *ServerSigner) SetIndices(ind []ParticipantID) error {
+	seen := make(map[ParticipantID]bool, len(ind))
+
+	for _, id := range ind {
+		if seen[id] {
+			return fmt.Errorf("ServerSigner.SetIndices failed: duplicate participant ID %d detected", id)
+		}
+		seen[id] = true
+	}
+
 	ss.indices = ind
 	ss.indicesSet = true
+	return nil
 }
 
 func (ss *ServerSigner) GetIndices() []ParticipantID {
