@@ -31,17 +31,25 @@ type Session struct {
 	id        []byte
 	indices   []ParticipantID
 	indexHash []byte
+	usernames []string
 }
 
 // HasParticipant checks whether a friend belongs to the active signer set.
 // Auxiliary function for the following one
 func (s *Session) HasParticipant(id ParticipantID) bool {
-	for _, x := range s.indices {
-		if x == id {
-			return true
-		}
+	return slices.Contains(s.indices, id)
+}
+
+func (s *Session) GetUsernames() []string {
+	return s.usernames
+}
+
+func (s *Session) AddUsername(username string) error {
+	if len(username) == 0 {
+		return errors.New("emtpy username")
 	}
-	return false
+	s.usernames = append(s.usernames, username)
+	return nil
 }
 
 // HasSigner checks whether id is an active signer.
